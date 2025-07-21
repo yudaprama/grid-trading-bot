@@ -43,7 +43,6 @@ type GridTradingBot struct {
 	currentPrice            float64
 	isRunning               bool
 	IsBacktest              bool
-	currentTime             time.Time
 	basePositionEstablished bool
 	conceptualGrid          []float64
 	entryPrice              float64

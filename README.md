@@ -42,7 +42,6 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 
 ## Prerequisites
 
-- **Go**: Version 1.23 or higher ([Download](https://golang.org/dl/))
 - **Binance Account**: Required for live trading
 - **API Keys**: Binance API keys with Futures trading permissions
 
