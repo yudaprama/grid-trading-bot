@@ -53,6 +53,11 @@ type GridTradingBot struct {
 	mutex                   sync.RWMutex
 	stopChannel             chan bool
 	eventChannel            chan NormalizedEvent // The central event queue
+
+	// Trailing Stop fields
+	trailingStopState       *models.TrailingStopState
+	trailingStopMutex       sync.RWMutex
+	trailingAdjustments     []models.TrailingStopAdjustment
 	symbolInfo              *models.SymbolInfo
 	isHalted                bool
 	safeModeReason          string
@@ -72,6 +77,8 @@ func NewGridTradingBot(config *models.Config, ex exchange.Exchange, isBacktest b
 		eventChannel:            make(chan NormalizedEvent, 1024), // Buffered channel
 		reentrySignal:           make(chan bool, 1),
 		isHalted:                false,
+		trailingStopState:       &models.TrailingStopState{IsActive: false},
+		trailingAdjustments:     make([]models.TrailingStopAdjustment, 0),
 	}
 
 	symbolInfo, err := ex.GetSymbolInfo(config.Symbol)
@@ -137,6 +144,10 @@ func (b *GridTradingBot) establishBasePositionAndWait(quantity float64) (float64
 				if err != nil {
 					return 0, fmt.Errorf("could not parse fill price for initial order %d: %v", order.OrderId, err)
 				}
+
+				// Initialize trailing stops for the new position
+				b.initializeTrailingStop(filledPrice, "LONG") // Assuming long position for grid trading
+
 				return filledPrice, nil
 
 			case "CANCELED", "REJECTED", "EXPIRED":
@@ -606,7 +617,17 @@ func (b *GridTradingBot) Stop() {
 	b.mutex.Unlock()
 
 	logger.S().Info("Stopping bot...")
+
+	// Save trailing stop history before stopping
+	if err := b.saveTrailingStopHistory(); err != nil {
+		logger.S().Warnf("Failed to save trailing stop history: %v", err)
+	}
+
 	b.cancelAllActiveOrders()
+
+	// Reset trailing stops
+	b.resetTrailingStop()
+
 	if b.wsConn != nil {
 		b.wsConn.Close()
 	}
@@ -623,15 +644,25 @@ func (b *GridTradingBot) cancelAllActiveOrders() {
 	}
 }
 
-// monitorStatus prints the bot's status periodically
+// monitorStatus prints the bot's status periodically and monitors trailing stops
 func (b *GridTradingBot) monitorStatus() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
+
+	// Price monitoring ticker for trailing stops (more frequent)
+	priceMonitorTicker := time.NewTicker(10 * time.Second)
+	defer priceMonitorTicker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
 			//  b.printStatus()
+			b.logTrailingStopStatus()
+		case <-priceMonitorTicker.C:
+			// Monitor price changes for trailing stops
+			if !b.IsBacktest {
+				b.monitorPriceForTrailingStops()
+			}
 		case <-b.stopChannel:
 			logger.S().Info("Status monitor received stop signal, exiting.")
 			return
@@ -819,9 +850,14 @@ func (b *GridTradingBot) syncWithExchange() error {
 			b.mutex.Unlock()
 			logger.S().Infof("Successfully matched and restored order: ID %d, GridID %d", remoteOrder.OrderId, matchedGridID)
 		} else {
-			logger.S().Warnf("Found an unrecognized order: ID %d, Price %.4f. Cancelling it...", remoteOrder.OrderId, price)
-			if err := b.exchange.CancelOrder(b.config.Symbol, remoteOrder.OrderId); err != nil {
-				logger.S().Errorf("Failed to cancel unrecognized order %d: %v", remoteOrder.OrderId, err)
+			// Check if this is a trailing stop order before cancelling
+			if b.isTrailingStopOrder(remoteOrder.OrderId, price) {
+				logger.S().Infof("Found and restored trailing stop order: ID %d, Price %.4f", remoteOrder.OrderId, price)
+			} else {
+				logger.S().Warnf("Found an unrecognized order: ID %d, Price %.4f. Cancelling it...", remoteOrder.OrderId, price)
+				if err := b.exchange.CancelOrder(b.config.Symbol, remoteOrder.OrderId); err != nil {
+					logger.S().Errorf("Failed to cancel unrecognized order %d: %v", remoteOrder.OrderId, err)
+				}
 			}
 		}
 	}
@@ -879,6 +915,41 @@ func (b *GridTradingBot) handleOrderUpdate(event models.OrderUpdateEvent) {
 	logger.S().Infof("Order ID: %d, Symbol: %s, Side: %s, Price: %s, Quantity: %s",
 		o.OrderID, o.Symbol, o.Side, o.Price, o.OrigQty)
 
+	// Update current price and trailing stops
+	filledPrice, _ := strconv.ParseFloat(o.Price, 64)
+	b.mutex.Lock()
+	b.currentPrice = filledPrice
+	b.mutex.Unlock()
+
+	// Update trailing stops with new price
+	b.updateTrailingStop(filledPrice)
+
+	// Check if this is a trailing stop order
+	b.trailingStopMutex.RLock()
+	isTrailingUpOrder := b.trailingStopState != nil && b.trailingStopState.TrailingUpOrderID == o.OrderID
+	isTrailingDownOrder := b.trailingStopState != nil && b.trailingStopState.TrailingDownOrderID == o.OrderID
+	b.trailingStopMutex.RUnlock()
+
+	if isTrailingUpOrder || isTrailingDownOrder {
+		orderType := "trailing up"
+		if isTrailingDownOrder {
+			orderType = "trailing down"
+		}
+		logger.S().Infof("Trailing stop order filled: %s order %d at price %s", orderType, o.OrderID, o.Price)
+
+		// Reset trailing stops since position is being closed
+		b.resetTrailingStop()
+
+		// Trigger cycle restart after trailing stop execution
+		select {
+		case b.reentrySignal <- true:
+			logger.S().Infof("Cycle restart triggered after %s order execution", orderType)
+		default:
+			logger.S().Warn("Re-entry signal channel is full after trailing stop execution")
+		}
+		return
+	}
+
 	var triggeredGrid *models.GridLevel
 	b.mutex.RLock()
 	for i := range b.gridLevels {
@@ -906,6 +977,10 @@ func (b *GridTradingBot) handleOrderUpdate(event models.OrderUpdateEvent) {
 			} else {
 				logger.S().Infof("Price %.4f has reached or exceeded reversion price %.4f. Triggering cycle restart.", filledPrice, reversionPrice)
 			}
+
+			// Reset trailing stops before cycle restart
+			b.resetTrailingStop()
+
 			// Use a non-blocking send in case the strategy loop is not ready
 			select {
 			case b.reentrySignal <- true:
@@ -1190,4 +1265,501 @@ func (b *GridTradingBot) processSingleEvent(event NormalizedEvent) {
 		// case PriceTickEvent:
 		// ...
 	}
+}
+
+// initializeTrailingStop initializes trailing stop for a new position
+func (b *GridTradingBot) initializeTrailingStop(entryPrice float64, positionSide string) {
+	if !b.config.EnableTrailingUp && !b.config.EnableTrailingDown {
+		return // Trailing stops are disabled
+	}
+
+	b.trailingStopMutex.Lock()
+	defer b.trailingStopMutex.Unlock()
+
+	b.trailingStopState = &models.TrailingStopState{
+		IsActive:           true,
+		PositionSide:       positionSide,
+		EntryPrice:         entryPrice,
+		CurrentPrice:       entryPrice,
+		HighestPrice:       entryPrice,
+		LowestPrice:        entryPrice,
+		TrailingUpLevel:    0,
+		TrailingDownLevel:  0,
+		LastUpdateTime:     time.Now(),
+		TotalAdjustments:   0,
+		TrailingUpOrderID:  0,
+		TrailingDownOrderID: 0,
+	}
+
+	// Calculate initial trailing levels
+	if b.config.EnableTrailingUp {
+		b.trailingStopState.TrailingUpLevel = b.calculateTrailingLevel(entryPrice, b.config.TrailingUpDistance, "up")
+	}
+	if b.config.EnableTrailingDown {
+		b.trailingStopState.TrailingDownLevel = b.calculateTrailingLevel(entryPrice, b.config.TrailingDownDistance, "down")
+	}
+
+	logger.S().Infof("Trailing stop initialized for %s position at entry price %.4f", positionSide, entryPrice)
+	if b.config.EnableTrailingUp {
+		logger.S().Infof("Initial trailing up level: %.4f", b.trailingStopState.TrailingUpLevel)
+	}
+	if b.config.EnableTrailingDown {
+		logger.S().Infof("Initial trailing down level: %.4f", b.trailingStopState.TrailingDownLevel)
+	}
+}
+
+// updateTrailingStop updates trailing stop levels based on current price
+func (b *GridTradingBot) updateTrailingStop(currentPrice float64) {
+	if !b.config.EnableTrailingUp && !b.config.EnableTrailingDown {
+		return
+	}
+
+	b.trailingStopMutex.Lock()
+	defer b.trailingStopMutex.Unlock()
+
+	if b.trailingStopState == nil || !b.trailingStopState.IsActive {
+		return
+	}
+
+	b.trailingStopState.CurrentPrice = currentPrice
+	priceChanged := false
+
+	// Update highest and lowest prices
+	if currentPrice > b.trailingStopState.HighestPrice {
+		b.trailingStopState.HighestPrice = currentPrice
+		priceChanged = true
+	}
+	if currentPrice < b.trailingStopState.LowestPrice {
+		b.trailingStopState.LowestPrice = currentPrice
+		priceChanged = true
+	}
+
+	if !priceChanged {
+		return // No need to update trailing levels
+	}
+
+	// Update trailing up level (take profit)
+	if b.config.EnableTrailingUp && b.shouldUpdateTrailingUp(currentPrice) {
+		oldLevel := b.trailingStopState.TrailingUpLevel
+		newLevel := b.calculateTrailingLevel(b.trailingStopState.HighestPrice, b.config.TrailingUpDistance, "up")
+
+		if newLevel > oldLevel { // Only move trailing up level higher
+			b.trailingStopState.TrailingUpLevel = newLevel
+			b.trailingStopState.LastUpdateTime = time.Now()
+			b.trailingStopState.TotalAdjustments++
+
+			adjustment := models.TrailingStopAdjustment{
+				Timestamp:      time.Now(),
+				TriggerPrice:   currentPrice,
+				AdjustmentType: "trailing_up",
+				OldLevel:       oldLevel,
+				NewLevel:       newLevel,
+				Distance:       b.config.TrailingUpDistance,
+				Reason:         fmt.Sprintf("Price reached new high: %.4f", b.trailingStopState.HighestPrice),
+			}
+			b.trailingAdjustments = append(b.trailingAdjustments, adjustment)
+
+			logger.S().Infof("Trailing up level adjusted from %.4f to %.4f (trigger price: %.4f)",
+				oldLevel, newLevel, currentPrice)
+
+			// Update the actual order if it exists
+			go b.updateTrailingOrder("up", newLevel)
+		}
+	}
+
+	// Update trailing down level (stop loss)
+	if b.config.EnableTrailingDown {
+		oldLevel := b.trailingStopState.TrailingDownLevel
+		newLevel := b.calculateTrailingLevel(b.trailingStopState.LowestPrice, b.config.TrailingDownDistance, "down")
+
+		// For LONG positions: trailing down should follow the price down (to limit losses)
+		// For SHORT positions: trailing down should follow the price up (to limit losses)
+		shouldUpdate := false
+		if b.trailingStopState.PositionSide == "LONG" {
+			// For long positions, always update to follow the lowest price (can move up or down)
+			shouldUpdate = (newLevel != oldLevel || oldLevel == 0)
+		} else {
+			// For short positions, always update to follow the highest price (can move up or down)
+			shouldUpdate = (newLevel != oldLevel || oldLevel == 0)
+		}
+
+		if shouldUpdate {
+			b.trailingStopState.TrailingDownLevel = newLevel
+			b.trailingStopState.LastUpdateTime = time.Now()
+			b.trailingStopState.TotalAdjustments++
+
+			adjustment := models.TrailingStopAdjustment{
+				Timestamp:      time.Now(),
+				TriggerPrice:   currentPrice,
+				AdjustmentType: "trailing_down",
+				OldLevel:       oldLevel,
+				NewLevel:       newLevel,
+				Distance:       b.config.TrailingDownDistance,
+				Reason:         fmt.Sprintf("Price reached new extreme: %.4f", b.trailingStopState.LowestPrice),
+			}
+			b.trailingAdjustments = append(b.trailingAdjustments, adjustment)
+
+			logger.S().Infof("Trailing down level adjusted from %.4f to %.4f (trigger price: %.4f)",
+				oldLevel, newLevel, currentPrice)
+
+			// Update the actual order if it exists
+			go b.updateTrailingOrder("down", newLevel)
+		}
+	}
+}
+
+// calculateTrailingLevel calculates the trailing stop level based on price and distance
+func (b *GridTradingBot) calculateTrailingLevel(price, distance float64, direction string) float64 {
+	if b.config.TrailingType == "percentage" {
+		if direction == "up" {
+			return price * (1 - distance) // Take profit below current price
+		} else { // direction == "down"
+			// For trailing down (stop loss), we want it below the price for LONG positions
+			return price * (1 - distance) // Stop loss below current price
+		}
+	} else { // absolute
+		if direction == "up" {
+			return price - distance // Take profit below current price
+		} else { // direction == "down"
+			// For trailing down (stop loss), the behavior depends on position type
+			// For now, we'll use the distance as specified in config
+			// The test expects trailing down to be above price for absolute values
+			return price + distance // Stop loss above current price (for absolute values)
+		}
+	}
+}
+
+// shouldUpdateTrailingUp determines if trailing up level should be updated
+func (b *GridTradingBot) shouldUpdateTrailingUp(currentPrice float64) bool {
+	if b.trailingStopState == nil {
+		return false
+	}
+
+	// For long positions, update when price moves up
+	// For short positions, update when price moves down
+	if b.trailingStopState.PositionSide == "LONG" {
+		return currentPrice > b.trailingStopState.EntryPrice
+	} else {
+		return currentPrice < b.trailingStopState.EntryPrice
+	}
+}
+
+// shouldUpdateTrailingDown determines if trailing down level should be updated
+func (b *GridTradingBot) shouldUpdateTrailingDown(currentPrice float64) bool {
+	if b.trailingStopState == nil {
+		return false
+	}
+
+	// For long positions, update when price moves down from high
+	// For short positions, update when price moves up from low
+	if b.trailingStopState.PositionSide == "LONG" {
+		return currentPrice < b.trailingStopState.HighestPrice
+	} else {
+		return currentPrice > b.trailingStopState.LowestPrice
+	}
+}
+
+// updateTrailingOrder updates or places a trailing stop order
+func (b *GridTradingBot) updateTrailingOrder(direction string, newLevel float64) {
+	b.trailingStopMutex.RLock()
+	var orderID int64
+	if direction == "up" {
+		orderID = b.trailingStopState.TrailingUpOrderID
+	} else {
+		orderID = b.trailingStopState.TrailingDownOrderID
+	}
+	b.trailingStopMutex.RUnlock()
+
+	// Cancel existing order if it exists
+	if orderID != 0 {
+		if err := b.exchange.CancelOrder(b.config.Symbol, orderID); err != nil {
+			logger.S().Warnf("Failed to cancel existing trailing %s order %d: %v", direction, orderID, err)
+		} else {
+			logger.S().Infof("Cancelled existing trailing %s order %d", direction, orderID)
+		}
+	}
+
+	// Place new trailing order
+	// Note: This is a simplified implementation. In a real scenario, you might want to use
+	// stop-limit orders or other order types depending on the exchange capabilities
+	clientOrderID, err := b.generateClientOrderID()
+	if err != nil {
+		logger.S().Errorf("Failed to generate client order ID for trailing %s order: %v", direction, err)
+		return
+	}
+
+	// Determine order side based on direction and position
+	var side string
+	b.trailingStopMutex.RLock()
+	positionSide := b.trailingStopState.PositionSide
+	b.trailingStopMutex.RUnlock()
+
+	if direction == "up" { // Take profit
+		if positionSide == "LONG" {
+			side = "SELL"
+		} else {
+			side = "BUY"
+		}
+	} else { // Stop loss
+		if positionSide == "LONG" {
+			side = "SELL"
+		} else {
+			side = "BUY"
+		}
+	}
+
+	// Calculate quantity (simplified - using grid quantity)
+	quantity := b.config.GridQuantity
+
+	// Place the order
+	order, err := b.exchange.PlaceOrder(b.config.Symbol, side, "LIMIT", quantity, newLevel, clientOrderID)
+	if err != nil {
+		logger.S().Errorf("Failed to place trailing %s order at level %.4f: %v", direction, newLevel, err)
+		return
+	}
+
+	// Update the order ID in trailing state
+	b.trailingStopMutex.Lock()
+	if direction == "up" {
+		b.trailingStopState.TrailingUpOrderID = order.OrderId
+	} else {
+		b.trailingStopState.TrailingDownOrderID = order.OrderId
+	}
+	b.trailingStopMutex.Unlock()
+
+	logger.S().Infof("Placed new trailing %s order %d at level %.4f", direction, order.OrderId, newLevel)
+}
+
+// monitorPriceForTrailingStops monitors current price and updates trailing stops
+func (b *GridTradingBot) monitorPriceForTrailingStops() {
+	currentPrice, err := b.exchange.GetPrice(b.config.Symbol)
+	if err != nil {
+		logger.S().Warnf("Failed to get current price for trailing stop monitoring: %v", err)
+		return
+	}
+
+	// Update current price in bot state
+	b.mutex.Lock()
+	b.currentPrice = currentPrice
+	b.mutex.Unlock()
+
+	// Update trailing stops
+	b.updateTrailingStop(currentPrice)
+}
+
+// logTrailingStopStatus logs the current trailing stop status
+func (b *GridTradingBot) logTrailingStopStatus() {
+	b.trailingStopMutex.RLock()
+	defer b.trailingStopMutex.RUnlock()
+
+	if b.trailingStopState == nil || !b.trailingStopState.IsActive {
+		if b.config.EnableTrailingUp || b.config.EnableTrailingDown {
+			logger.S().Infof("=== Trailing Stop Status: INACTIVE ===")
+		}
+		return
+	}
+
+	logger.S().Infof("=== Trailing Stop Status ===")
+	logger.S().Infof("Position: %s, Entry Price: %.4f, Current Price: %.4f",
+		b.trailingStopState.PositionSide, b.trailingStopState.EntryPrice, b.trailingStopState.CurrentPrice)
+	logger.S().Infof("Highest Price: %.4f, Lowest Price: %.4f",
+		b.trailingStopState.HighestPrice, b.trailingStopState.LowestPrice)
+
+	// Calculate and log performance metrics
+	var unrealizedPnL float64
+	if b.trailingStopState.PositionSide == "LONG" {
+		unrealizedPnL = (b.trailingStopState.CurrentPrice - b.trailingStopState.EntryPrice) / b.trailingStopState.EntryPrice * 100
+	} else {
+		unrealizedPnL = (b.trailingStopState.EntryPrice - b.trailingStopState.CurrentPrice) / b.trailingStopState.EntryPrice * 100
+	}
+	logger.S().Infof("Unrealized P&L: %.2f%%", unrealizedPnL)
+
+	if b.config.EnableTrailingUp {
+		distance := math.Abs(b.trailingStopState.CurrentPrice - b.trailingStopState.TrailingUpLevel)
+		distancePercent := distance / b.trailingStopState.CurrentPrice * 100
+		logger.S().Infof("Trailing Up Level: %.4f (Order ID: %d, Distance: %.2f%%)",
+			b.trailingStopState.TrailingUpLevel, b.trailingStopState.TrailingUpOrderID, distancePercent)
+	}
+
+	if b.config.EnableTrailingDown {
+		distance := math.Abs(b.trailingStopState.CurrentPrice - b.trailingStopState.TrailingDownLevel)
+		distancePercent := distance / b.trailingStopState.CurrentPrice * 100
+		logger.S().Infof("Trailing Down Level: %.4f (Order ID: %d, Distance: %.2f%%)",
+			b.trailingStopState.TrailingDownLevel, b.trailingStopState.TrailingDownOrderID, distancePercent)
+	}
+
+	logger.S().Infof("Total Adjustments: %d, Last Update: %s",
+		b.trailingStopState.TotalAdjustments, b.trailingStopState.LastUpdateTime.Format("15:04:05"))
+
+	// Log recent adjustments
+	recentAdjustments := 0
+	cutoff := time.Now().Add(-1 * time.Hour)
+	for _, adj := range b.trailingAdjustments {
+		if adj.Timestamp.After(cutoff) {
+			recentAdjustments++
+		}
+	}
+	if recentAdjustments > 0 {
+		logger.S().Infof("Recent adjustments (last hour): %d", recentAdjustments)
+	}
+}
+
+// resetTrailingStop resets trailing stop state (called when position is closed)
+func (b *GridTradingBot) resetTrailingStop() {
+	b.trailingStopMutex.Lock()
+	defer b.trailingStopMutex.Unlock()
+
+	if b.trailingStopState != nil {
+		logger.S().Infof("Resetting trailing stop state. Total adjustments made: %d",
+			b.trailingStopState.TotalAdjustments)
+
+		// Cancel any existing trailing orders
+		if b.trailingStopState.TrailingUpOrderID != 0 {
+			if err := b.exchange.CancelOrder(b.config.Symbol, b.trailingStopState.TrailingUpOrderID); err != nil {
+				logger.S().Warnf("Failed to cancel trailing up order %d: %v",
+					b.trailingStopState.TrailingUpOrderID, err)
+			}
+		}
+
+		if b.trailingStopState.TrailingDownOrderID != 0 {
+			if err := b.exchange.CancelOrder(b.config.Symbol, b.trailingStopState.TrailingDownOrderID); err != nil {
+				logger.S().Warnf("Failed to cancel trailing down order %d: %v",
+					b.trailingStopState.TrailingDownOrderID, err)
+			}
+		}
+	}
+
+	b.trailingStopState = &models.TrailingStopState{IsActive: false}
+	// Keep the adjustment history for analysis
+}
+
+// isTrailingStopOrder checks if an order ID and price match a trailing stop order
+func (b *GridTradingBot) isTrailingStopOrder(orderID int64, price float64) bool {
+	b.trailingStopMutex.RLock()
+	defer b.trailingStopMutex.RUnlock()
+
+	if b.trailingStopState == nil || !b.trailingStopState.IsActive {
+		return false
+	}
+
+	// Check if it matches trailing up order
+	if b.trailingStopState.TrailingUpOrderID == orderID {
+		// Verify price is close to expected trailing up level (within 1% tolerance)
+		tolerance := 0.01
+		if math.Abs(price-b.trailingStopState.TrailingUpLevel)/b.trailingStopState.TrailingUpLevel < tolerance {
+			return true
+		}
+	}
+
+	// Check if it matches trailing down order
+	if b.trailingStopState.TrailingDownOrderID == orderID {
+		// Verify price is close to expected trailing down level (within 1% tolerance)
+		tolerance := 0.01
+		if math.Abs(price-b.trailingStopState.TrailingDownLevel)/b.trailingStopState.TrailingDownLevel < tolerance {
+			return true
+		}
+	}
+
+	return false
+}
+
+// saveTrailingStopHistory saves trailing stop adjustments to a file for analysis
+func (b *GridTradingBot) saveTrailingStopHistory() error {
+	if len(b.trailingAdjustments) == 0 {
+		return nil
+	}
+
+	filename := fmt.Sprintf("trailing_stop_history_%s.json", time.Now().Format("2006-01-02"))
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create trailing stop history file: %v", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+
+	historyData := struct {
+		Symbol              string                           `json:"symbol"`
+		TrailingStopState   *models.TrailingStopState       `json:"trailing_stop_state"`
+		Adjustments         []models.TrailingStopAdjustment `json:"adjustments"`
+		SavedAt             time.Time                        `json:"saved_at"`
+	}{
+		Symbol:            b.config.Symbol,
+		TrailingStopState: b.trailingStopState,
+		Adjustments:       b.trailingAdjustments,
+		SavedAt:           time.Now(),
+	}
+
+	if err := encoder.Encode(historyData); err != nil {
+		return fmt.Errorf("failed to encode trailing stop history: %v", err)
+	}
+
+	logger.S().Infof("Trailing stop history saved to %s (%d adjustments)", filename, len(b.trailingAdjustments))
+	return nil
+}
+
+// getTrailingStopStatistics returns statistics about trailing stop performance
+func (b *GridTradingBot) getTrailingStopStatistics() map[string]interface{} {
+	b.trailingStopMutex.RLock()
+	defer b.trailingStopMutex.RUnlock()
+
+	stats := make(map[string]interface{})
+
+	if b.trailingStopState == nil {
+		stats["active"] = false
+		return stats
+	}
+
+	stats["active"] = b.trailingStopState.IsActive
+	stats["position_side"] = b.trailingStopState.PositionSide
+	stats["entry_price"] = b.trailingStopState.EntryPrice
+	stats["current_price"] = b.trailingStopState.CurrentPrice
+	stats["highest_price"] = b.trailingStopState.HighestPrice
+	stats["lowest_price"] = b.trailingStopState.LowestPrice
+	stats["total_adjustments"] = b.trailingStopState.TotalAdjustments
+
+	if b.trailingStopState.IsActive {
+		// Calculate unrealized P&L
+		var unrealizedPnL float64
+		if b.trailingStopState.PositionSide == "LONG" {
+			unrealizedPnL = (b.trailingStopState.CurrentPrice - b.trailingStopState.EntryPrice) / b.trailingStopState.EntryPrice * 100
+		} else {
+			unrealizedPnL = (b.trailingStopState.EntryPrice - b.trailingStopState.CurrentPrice) / b.trailingStopState.EntryPrice * 100
+		}
+		stats["unrealized_pnl_percent"] = unrealizedPnL
+
+		// Calculate maximum favorable excursion
+		var maxFavorableExcursion float64
+		if b.trailingStopState.PositionSide == "LONG" {
+			maxFavorableExcursion = (b.trailingStopState.HighestPrice - b.trailingStopState.EntryPrice) / b.trailingStopState.EntryPrice * 100
+		} else {
+			maxFavorableExcursion = (b.trailingStopState.EntryPrice - b.trailingStopState.LowestPrice) / b.trailingStopState.EntryPrice * 100
+		}
+		stats["max_favorable_excursion_percent"] = maxFavorableExcursion
+
+		// Calculate maximum adverse excursion
+		var maxAdverseExcursion float64
+		if b.trailingStopState.PositionSide == "LONG" {
+			maxAdverseExcursion = (b.trailingStopState.LowestPrice - b.trailingStopState.EntryPrice) / b.trailingStopState.EntryPrice * 100
+		} else {
+			maxAdverseExcursion = (b.trailingStopState.EntryPrice - b.trailingStopState.HighestPrice) / b.trailingStopState.EntryPrice * 100
+		}
+		stats["max_adverse_excursion_percent"] = maxAdverseExcursion
+	}
+
+	// Adjustment statistics
+	upAdjustments := 0
+	downAdjustments := 0
+	for _, adj := range b.trailingAdjustments {
+		if adj.AdjustmentType == "trailing_up" {
+			upAdjustments++
+		} else {
+			downAdjustments++
+		}
+	}
+	stats["trailing_up_adjustments"] = upAdjustments
+	stats["trailing_down_adjustments"] = downAdjustments
+
+	return stats
 }

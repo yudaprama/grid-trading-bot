@@ -18,6 +18,11 @@
   "wallet_exposure_limit": 3.0,
   "retry_attempts": 5,
   "retry_initial_delay_ms": 1000,
+  "enable_trailing_up": false,
+  "enable_trailing_down": false,
+  "trailing_up_distance": 0.02,
+  "trailing_down_distance": 0.015,
+  "trailing_type": "percentage",
   "log": {
   	"level": "info",
   	"output": "both",

@@ -1,7 +1,6 @@
 package exchange
 
 import (
-	"github.com/yudaprama/grid-trading-bot/internal/models"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
@@ -12,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/yudaprama/grid-trading-bot/internal/models"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -120,7 +121,7 @@ func (e *LiveExchange) doRequest(method, endpoint string, params url.Values, sig
 	var binanceError models.Error
 	// Try to parse response as Binance error structure
 	if json.Unmarshal(body, &binanceError) == nil && binanceError.Code != 0 {
-		// 特殊处理：币安有时会用 code: 200 的“错误”消息体来表示一个成功的操作，
+		// Special handling: Binance sometimes uses a "error" message body with code: 200 to indicate a successful operation,
 		// for example, when there are no pending orders to cancel. We should not treat this as a real error.
 		if binanceError.Code == 200 {
 			// This is a successful response, continue execution as if no error occurred

@@ -29,6 +29,13 @@ type Config struct {
 	WalletExposureLimit      float64   `json:"wallet_exposure_limit"`                 // 新增：钱包风险暴露上限
 	LogConfig                LogConfig `json:"log"`                                   // 新增：日志配置
 	RetryAttempts            int       `json:"retry_attempts"`                        // 新增: 下单失败时的重试次数
+
+	// Trailing Stop Configuration
+	EnableTrailingUp         bool      `json:"enable_trailing_up"`                    // 启用追踪止盈功能
+	EnableTrailingDown       bool      `json:"enable_trailing_down"`                  // 启用追踪止损功能
+	TrailingUpDistance       float64   `json:"trailing_up_distance"`                  // 追踪止盈距离
+	TrailingDownDistance     float64   `json:"trailing_down_distance"`                // 追踪止损距离
+	TrailingType             string    `json:"trailing_type"`                         // 追踪类型: "percentage" 或 "absolute"
 	RetryInitialDelayMs      int       `json:"retry_initial_delay_ms"`                // 新增: 重试前的初始延迟毫秒数
 	WebSocketPingIntervalSec int       `json:"websocket_ping_interval_sec,omitempty"` // 新增: WebSocket Ping消息发送间隔(秒)
 	WebSocketPongTimeoutSec  int       `json:"websocket_pong_timeout_sec,omitempty"`  // 新增: WebSocket Pong消息超时时间(秒)
@@ -170,6 +177,33 @@ type Filter struct {
 	MinQty      string `json:"minQty,omitempty"`      // For LOT_SIZE
 	MaxQty      string `json:"maxQty,omitempty"`      // For LOT_SIZE
 	MinNotional string `json:"minNotional,omitempty"` // For MIN_NOTIONAL
+}
+
+// TrailingStopState represents the current state of trailing stops for a position
+type TrailingStopState struct {
+	IsActive              bool      `json:"is_active"`                // Whether trailing stop is currently active
+	PositionSide          string    `json:"position_side"`            // "LONG" or "SHORT"
+	EntryPrice            float64   `json:"entry_price"`              // Original entry price of the position
+	CurrentPrice          float64   `json:"current_price"`            // Current market price
+	HighestPrice          float64   `json:"highest_price"`            // Highest price seen since position opened (for trailing up)
+	LowestPrice           float64   `json:"lowest_price"`             // Lowest price seen since position opened (for trailing down)
+	TrailingUpLevel       float64   `json:"trailing_up_level"`        // Current trailing take profit level
+	TrailingDownLevel     float64   `json:"trailing_down_level"`      // Current trailing stop loss level
+	LastUpdateTime        time.Time `json:"last_update_time"`         // Last time trailing levels were updated
+	TotalAdjustments      int       `json:"total_adjustments"`        // Total number of trailing adjustments made
+	TrailingUpOrderID     int64     `json:"trailing_up_order_id"`     // Order ID for trailing take profit order
+	TrailingDownOrderID   int64     `json:"trailing_down_order_id"`   // Order ID for trailing stop loss order
+}
+
+// TrailingStopAdjustment represents a single trailing stop adjustment event
+type TrailingStopAdjustment struct {
+	Timestamp         time.Time `json:"timestamp"`           // When the adjustment occurred
+	TriggerPrice      float64   `json:"trigger_price"`       // Price that triggered the adjustment
+	AdjustmentType    string    `json:"adjustment_type"`     // "trailing_up" or "trailing_down"
+	OldLevel          float64   `json:"old_level"`           // Previous trailing level
+	NewLevel          float64   `json:"new_level"`           // New trailing level
+	Distance          float64   `json:"distance"`            // Distance/percentage used for adjustment
+	Reason            string    `json:"reason"`              // Reason for the adjustment
 }
 
 // Trade defines information for a single trade execution
