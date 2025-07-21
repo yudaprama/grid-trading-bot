@@ -6,6 +6,8 @@
 
 A high-frequency grid trading bot for Binance Futures, written in Go. It supports both live trading and historical data backtesting to help you develop and verify your trading strategies.
 
+> **⚠️ Important**: This bot is designed exclusively for **Binance Futures trading** and does not support Binance Spot trading. It uses leverage, margin modes, and position management features specific to futures contracts.
+
 ## 🚀 Features
 
 - **🔴 Live Trading Mode**: Connects to Binance API to trade in real-time
@@ -21,6 +23,7 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 
 ## 📋 Table of Contents
 
+- [Trading Type Support](#trading-type-support)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
   - [Download Pre-built Binaries](#download-pre-built-binaries)
@@ -39,6 +42,38 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 - [Development](#development)
 - [Safety and Disclaimer](#safety-and-disclaimer)
 - [License](#license)
+
+## Trading Type Support
+
+This bot is designed exclusively for **Binance Futures trading** and does **NOT** support Binance Spot trading.
+
+### ✅ **Supported: Binance Futures**
+- **Leverage Trading**: Supports leverage up to 125x (configurable)
+- **Margin Modes**: Both CROSSED and ISOLATED margin types
+- **Position Modes**: One-way and Hedge mode support
+- **Futures Contracts**: USDT-M perpetual futures (e.g., BTCUSDT, ETHUSDT)
+- **Advanced Features**: Position risk management, liquidation protection
+- **API Endpoints**: Uses Binance Futures API (`/fapi/` endpoints)
+
+### ❌ **Not Supported: Binance Spot**
+- **Spot Trading**: No support for spot market trading
+- **Spot API**: Does not use spot API endpoints (`/api/` endpoints)
+- **Spot Features**: No support for spot-specific features like savings, staking, etc.
+
+### 🔧 **Futures-Specific Features Used**
+- **Position Management**: Tracks open positions and unrealized P&L
+- **Leverage Control**: Automatic leverage setting and management
+- **Margin Type**: Configurable margin mode (CROSSED/ISOLATED)
+- **Position Mode**: Support for hedge mode and one-way mode
+- **Risk Management**: Built-in liquidation prevention and exposure limits
+
+### 📋 **Supported Trading Pairs**
+Any USDT-M perpetual futures contract available on Binance Futures, including:
+- Major cryptocurrencies: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`
+- Altcoins: `ADAUSDT`, `DOTUSDT`, `LINKUSDT`
+- And many more available on Binance Futures
+
+> **💡 Note**: If you need spot trading functionality, you would need to modify the bot to use Binance Spot API endpoints (`/api/` instead of `/fapi/`) and remove futures-specific features like leverage and position management.
 
 ## Prerequisites
 
@@ -451,9 +486,12 @@ graph TD
 3. **Create API Key**:
    - Go to Account > API Management
    - Create new API key
-   - **Important**: Enable "Enable Futures" permission
+   - **Required Permissions**:
+     - ✅ **Enable Reading** (Required)
+     - ✅ **Enable Futures** (Required for futures trading)
+     - ❌ **Disable Spot & Margin Trading** (Not used by this bot)
+     - ❌ **Disable Withdrawals** (Never enable for security)
    - Restrict IP access for security
-   - **Never enable withdrawal permissions**
 
 ### Testnet Setup
 
@@ -577,9 +615,11 @@ GOOS=darwin GOARCH=amd64 go build -o grid-bot-macos ./cmd/bot/main.go
 
 ### Risk Warning
 
-**Cryptocurrency trading involves substantial risk and is not suitable for all investors.** Past performance does not guarantee future results. The use of trading bots can amplify both profits and losses. You could lose some or all of your investment.
+**Cryptocurrency futures trading involves substantial risk and is not suitable for all investors.** Past performance does not guarantee future results. The use of trading bots with leverage can amplify both profits and losses. You could lose some or all of your investment.
 
 **Key Risks:**
+- **Leverage Risk**: Futures trading uses leverage which can amplify losses
+- **Liquidation Risk**: Positions may be liquidated if margin requirements aren't met
 - Market volatility can cause rapid losses
 - Grid trading can accumulate positions in trending markets
 - Technical failures may disrupt trading
