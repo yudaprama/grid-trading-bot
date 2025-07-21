@@ -1,0 +1,63 @@
+{
+  "_comment": "=== LONG POSITION FUTURES STRATEGY ===",
+  "_description": "Bullish strategy expecting price to increase",
+  
+  "trading_mode": "futures",
+  "position_direction": "LONG",
+  "symbol": "BTCUSDT",
+  "is_testnet": true,
+  
+  "_comment_position": "LONG position configuration",
+  "hedge_mode": false,
+  "leverage": 10,
+  "margin_type": "CROSSED",
+  "initial_investment": 1000.0,
+  
+  "_comment_grid": "Grid optimized for LONG positions",
+  "grid_spacing": 0.01,
+  "grid_quantity": 0.001,
+  "active_orders_count": 5,
+  "wallet_exposure_limit": 0.7,
+  "min_notional_value": 10.0,
+  "return_rate": 0.1,
+  "grid_count": 50,
+  
+  "_comment_risk": "Risk management for LONG positions",
+  "enable_trailing_up": true,
+  "trailing_up_distance": 0.02,
+  "enable_trailing_down": true,
+  "trailing_down_distance": 0.015,
+  "trailing_type": "percentage",
+  
+  "_comment_api": "Futures API configuration",
+  "live_api_url": "https://fapi.binance.com",
+  "live_ws_url": "wss://fstream.binance.com",
+  "testnet_api_url": "https://testnet.binancefuture.com",
+  "testnet_ws_url": "wss://stream.binancefuture.com",
+  
+  "_comment_retry": "Retry configuration",
+  "retry_attempts": 5,
+  "retry_initial_delay_ms": 1000,
+  
+  "_comment_websocket": "WebSocket configuration",
+  "websocket_ping_interval_sec": 30,
+  "websocket_pong_timeout_sec": 75,
+  
+  "log": {
+    "level": "info",
+    "output": "both",
+    "file": "logs/grid-bot-long.log",
+    "max_size": 10,
+    "max_backups": 5,
+    "max_age": 30,
+    "compress": false
+  },
+  
+  "_strategy_notes": [
+    "LONG strategy profits from price increases",
+    "Grid places more BUY orders below current price",
+    "SELL orders above current price take profits",
+    "Suitable for bullish market conditions",
+    "Higher leverage amplifies both gains and risks"
+  ]
+}

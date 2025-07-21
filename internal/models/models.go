@@ -39,6 +39,7 @@ type Config struct {
 
 	// Trading Mode Configuration
 	TradingMode              string    `json:"trading_mode"`                          // 交易模式: "futures" 或 "spot"
+	PositionDirection        string    `json:"position_direction,omitempty"`          // 仓位方向: "LONG", "SHORT", "NEUTRAL" (futures only)
 
 	// Spot Trading Configuration (only used when TradingMode == "spot")
 	BaseAsset                string    `json:"base_asset,omitempty"`                  // 基础资产 (如 BTC)

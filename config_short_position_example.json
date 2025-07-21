@@ -1,0 +1,72 @@
+{
+  "_comment": "=== SHORT POSITION FUTURES STRATEGY ===",
+  "_description": "Bearish strategy expecting price to decrease",
+  "_warning": "ENHANCED VERSION: Supports automatic SHORT position establishment",
+  
+  "trading_mode": "futures",
+  "position_direction": "SHORT",
+  "symbol": "BTCUSDT",
+  "is_testnet": true,
+  
+  "_comment_position": "SHORT position configuration",
+  "hedge_mode": false,
+  "leverage": 8,
+  "margin_type": "ISOLATED",
+  "initial_investment": 1000.0,
+  
+  "_comment_grid": "Grid optimized for SHORT positions",
+  "grid_spacing": 0.015,
+  "grid_quantity": 0.001,
+  "active_orders_count": 5,
+  "wallet_exposure_limit": 0.5,
+  "min_notional_value": 10.0,
+  "return_rate": 0.1,
+  "grid_count": 40,
+  
+  "_comment_risk": "Conservative risk for SHORT positions",
+  "enable_trailing_up": true,
+  "trailing_up_distance": 0.015,
+  "enable_trailing_down": true,
+  "trailing_down_distance": 0.02,
+  "trailing_type": "percentage",
+  
+  "_comment_api": "Futures API configuration",
+  "live_api_url": "https://fapi.binance.com",
+  "live_ws_url": "wss://fstream.binance.com",
+  "testnet_api_url": "https://testnet.binancefuture.com",
+  "testnet_ws_url": "wss://stream.binancefuture.com",
+  
+  "_comment_retry": "Retry configuration",
+  "retry_attempts": 5,
+  "retry_initial_delay_ms": 1000,
+  
+  "_comment_websocket": "WebSocket configuration",
+  "websocket_ping_interval_sec": 30,
+  "websocket_pong_timeout_sec": 75,
+  
+  "log": {
+    "level": "info",
+    "output": "both",
+    "file": "logs/grid-bot-short.log",
+    "max_size": 10,
+    "max_backups": 5,
+    "max_age": 30,
+    "compress": false
+  },
+  
+  "_strategy_notes": [
+    "SHORT strategy profits from price decreases",
+    "Grid places more SELL orders above current price",
+    "BUY orders below current price cover shorts",
+    "Suitable for bearish market conditions",
+    "Lower leverage recommended for SHORT strategies",
+    "Isolated margin provides better risk control"
+  ],
+  
+  "_enhanced_features": [
+    "Automatic SHORT position establishment via market SELL",
+    "Optimized grid placement for SHORT strategies",
+    "Direction-aware trailing stop calculations",
+    "Asymmetric order distribution (70% SELL, 30% BUY)"
+  ]
+}

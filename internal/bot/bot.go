@@ -111,6 +111,263 @@ func NewGridTradingBot(config *models.Config, ex exchange.Exchange, isBacktest b
 	return bot
 }
 
+// establishPositionByDirection establishes initial position based on configured direction
+func (b *GridTradingBot) establishPositionByDirection(quantity float64) (float64, string, error) {
+	direction := b.getPositionDirection()
+
+	switch direction {
+	case "LONG":
+		filledPrice, err := b.establishBasePositionAndWait(quantity)
+		return filledPrice, "LONG", err
+	case "SHORT":
+		return b.establishShortPosition(quantity)
+	case "NEUTRAL":
+		return b.establishNeutralPosition(quantity)
+	default:
+		// Default to LONG for backward compatibility
+		logger.S().Warnf("Unknown position direction '%s', defaulting to LONG", direction)
+		filledPrice, err := b.establishBasePositionAndWait(quantity)
+		return filledPrice, "LONG", err
+	}
+}
+
+// getPositionDirection determines the position direction from configuration
+func (b *GridTradingBot) getPositionDirection() string {
+	if b.config.PositionDirection != "" {
+		return b.config.PositionDirection
+	}
+
+	// Check if we have existing positions
+	if positions, err := b.exchange.GetPositions(b.config.Symbol); err == nil {
+		for _, pos := range positions {
+			if pos.Symbol == b.config.Symbol {
+				posAmt, _ := strconv.ParseFloat(pos.PositionAmt, 64)
+				if posAmt > 0 {
+					return "LONG"
+				} else if posAmt < 0 {
+					return "SHORT"
+				}
+			}
+		}
+	}
+
+	// Default to LONG
+	return "LONG"
+}
+
+// establishShortPosition establishes a SHORT position via market SELL
+func (b *GridTradingBot) establishShortPosition(quantity float64) (float64, string, error) {
+	clientOrderID, err := b.generateClientOrderID()
+	if err != nil {
+		return 0, "", fmt.Errorf("could not generate ID for SHORT position order: %v", err)
+	}
+
+	order, err := b.exchange.PlaceOrder(b.config.Symbol, "SELL", "MARKET", quantity, 0, clientOrderID)
+	if err != nil {
+		return 0, "", fmt.Errorf("initial market SELL failed: %v", err)
+	}
+
+	logger.S().Infof("Submitted SHORT position order ID: %d, Quantity: %.5f. Waiting for fill...", order.OrderId, quantity)
+
+	filledPrice, err := b.waitForOrderFill(order.OrderId)
+	if err != nil {
+		return 0, "", err
+	}
+
+	b.mutex.Lock()
+	b.basePositionEstablished = true
+	b.mutex.Unlock()
+
+	return filledPrice, "SHORT", nil
+}
+
+// establishNeutralPosition establishes neutral position (requires hedge mode)
+func (b *GridTradingBot) establishNeutralPosition(quantity float64) (float64, string, error) {
+	if !b.config.HedgeMode {
+		return 0, "", fmt.Errorf("neutral position requires hedge_mode to be enabled")
+	}
+
+	// For neutral strategy, start with a small LONG position
+	// The grid will then place both BUY and SELL orders
+	halfQuantity := quantity / 2
+
+	filledPrice, err := b.establishBasePositionAndWait(halfQuantity)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to establish initial neutral position: %v", err)
+	}
+
+	logger.S().Infof("Established neutral position base at price %.4f", filledPrice)
+	return filledPrice, "NEUTRAL", nil
+}
+
+// waitForOrderFill waits for an order to be filled and returns the fill price
+func (b *GridTradingBot) waitForOrderFill(orderID int64) (float64, error) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	timeout := time.After(2 * time.Minute)
+
+	for {
+		select {
+		case <-timeout:
+			return 0, fmt.Errorf("timeout waiting for order %d to fill", orderID)
+		case <-ticker.C:
+			status, err := b.exchange.GetOrderStatus(b.config.Symbol, orderID)
+			if err != nil {
+				logger.S().Errorf("Error checking order %d status: %v", orderID, err)
+				continue
+			}
+
+			switch status.Status {
+			case "FILLED":
+				logger.S().Infof("Order %d has been filled!", orderID)
+
+				trade, err := b.exchange.GetLastTrade(b.config.Symbol, orderID)
+				if err != nil {
+					return 0, fmt.Errorf("could not get trade for order %d: %v", orderID, err)
+				}
+
+				filledPrice, err := strconv.ParseFloat(trade.Price, 64)
+				if err != nil {
+					return 0, fmt.Errorf("could not parse fill price for order %d: %v", orderID, err)
+				}
+
+				return filledPrice, nil
+
+			case "CANCELED", "REJECTED", "EXPIRED":
+				return 0, fmt.Errorf("order %d was %s", orderID, status.Status)
+			}
+		case <-b.stopChannel:
+			return 0, fmt.Errorf("bot stopped, interrupting order fill wait")
+		}
+	}
+}
+
+// setupGridForDirection sets up grid orders based on position direction
+func (b *GridTradingBot) setupGridForDirection(centerPrice float64, direction string) error {
+	switch direction {
+	case "LONG":
+		return b.setupLongGrid(centerPrice)
+	case "SHORT":
+		return b.setupShortGrid(centerPrice)
+	case "NEUTRAL":
+		return b.setupNeutralGrid(centerPrice)
+	default:
+		return b.setupInitialGrid(centerPrice) // Default fallback
+	}
+}
+
+// setupLongGrid places grid orders optimized for LONG positions
+func (b *GridTradingBot) setupLongGrid(centerPrice float64) error {
+	logger.S().Infof("Setting up LONG-optimized grid around price %.4f", centerPrice)
+	// For now, use the existing setupInitialGrid logic
+	// TODO: Implement asymmetric grid placement (70% buy orders, 30% sell orders)
+	return b.setupInitialGrid(centerPrice)
+}
+
+// setupShortGrid places grid orders optimized for SHORT positions
+func (b *GridTradingBot) setupShortGrid(centerPrice float64) error {
+	logger.S().Infof("Setting up SHORT-optimized grid around price %.4f", centerPrice)
+	// For now, use the existing setupInitialGrid logic
+	// TODO: Implement asymmetric grid placement (70% sell orders, 30% buy orders)
+	return b.setupInitialGrid(centerPrice)
+}
+
+// setupNeutralGrid places balanced grid orders for neutral strategy
+func (b *GridTradingBot) setupNeutralGrid(centerPrice float64) error {
+	logger.S().Infof("Setting up NEUTRAL grid around price %.4f", centerPrice)
+	// For now, use the existing setupInitialGrid logic
+	// TODO: Implement balanced grid placement (50% buy orders, 50% sell orders)
+	return b.setupInitialGrid(centerPrice)
+}
+
+// initializeTrailingStopForDirection initializes trailing stop with position direction awareness
+func (b *GridTradingBot) initializeTrailingStopForDirection(entryPrice float64, direction string) {
+	if !b.config.EnableTrailingUp && !b.config.EnableTrailingDown {
+		return
+	}
+
+	b.trailingStopMutex.Lock()
+	defer b.trailingStopMutex.Unlock()
+
+	b.trailingStopState = &models.TrailingStopState{
+		IsActive:           true,
+		PositionSide:       direction,
+		EntryPrice:         entryPrice,
+		CurrentPrice:       entryPrice,
+		HighestPrice:       entryPrice,
+		LowestPrice:        entryPrice,
+		TrailingUpLevel:    0,
+		TrailingDownLevel:  0,
+		LastUpdateTime:     time.Now(),
+		TotalAdjustments:   0,
+		TrailingUpOrderID:  0,
+		TrailingDownOrderID: 0,
+	}
+
+	// Calculate trailing levels based on position direction
+	if b.config.EnableTrailingUp {
+		b.trailingStopState.TrailingUpLevel = b.calculateTrailingLevelForDirection(
+			entryPrice, b.config.TrailingUpDistance, "up", direction)
+	}
+	if b.config.EnableTrailingDown {
+		b.trailingStopState.TrailingDownLevel = b.calculateTrailingLevelForDirection(
+			entryPrice, b.config.TrailingDownDistance, "down", direction)
+	}
+
+	logger.S().Infof("Trailing stop initialized for %s position at entry price %.4f", direction, entryPrice)
+}
+
+// calculateTrailingLevelForDirection calculates trailing levels based on position direction
+func (b *GridTradingBot) calculateTrailingLevelForDirection(price, distance float64, trailingDirection, positionDirection string) float64 {
+	if b.config.TrailingType == "percentage" {
+		switch positionDirection {
+		case "LONG":
+			if trailingDirection == "up" {
+				return price * (1 + distance) // Take profit above current price
+			} else {
+				return price * (1 - distance) // Stop loss below current price
+			}
+		case "SHORT":
+			if trailingDirection == "up" {
+				return price * (1 - distance) // Take profit below current price
+			} else {
+				return price * (1 + distance) // Stop loss above current price
+			}
+		case "NEUTRAL":
+			// For neutral, use standard LONG logic
+			if trailingDirection == "up" {
+				return price * (1 + distance)
+			} else {
+				return price * (1 - distance)
+			}
+		}
+	} else { // absolute
+		switch positionDirection {
+		case "LONG":
+			if trailingDirection == "up" {
+				return price + distance // Take profit above current price
+			} else {
+				return price - distance // Stop loss below current price
+			}
+		case "SHORT":
+			if trailingDirection == "up" {
+				return price - distance // Take profit below current price
+			} else {
+				return price + distance // Stop loss above current price
+			}
+		case "NEUTRAL":
+			// For neutral, use standard LONG logic
+			if trailingDirection == "up" {
+				return price + distance
+			} else {
+				return price - distance
+			}
+		}
+	}
+
+	return price // Fallback
+}
+
 // establishBasePositionAndWait tries to establish the initial base position and waits for it to be filled
 func (b *GridTradingBot) establishBasePositionAndWait(quantity float64) (float64, error) {
 	clientOrderID, err := b.generateClientOrderID()
@@ -159,9 +416,8 @@ func (b *GridTradingBot) establishBasePositionAndWait(quantity float64) (float64
 					return 0, fmt.Errorf("could not parse fill price for initial order %d: %v", order.OrderId, err)
 				}
 
-				// Initialize trailing stops for the new position
-				b.initializeTrailingStop(filledPrice, "LONG") // Assuming long position for grid trading
-
+				// Note: Trailing stops are now initialized in the calling function
+				// with the actual position direction
 				return filledPrice, nil
 
 			case "CANCELED", "REJECTED", "EXPIRED":
@@ -245,11 +501,14 @@ func (b *GridTradingBot) enterMarketAndSetupGrid() error {
 		b.basePositionEstablished = true
 		b.mutex.Unlock()
 	} else {
-		filledPrice, err := b.establishBasePositionAndWait(initialPositionQuantity)
+		filledPrice, positionDirection, err := b.establishPositionByDirection(initialPositionQuantity)
 		if err != nil {
 			return fmt.Errorf("failed to establish initial position, cannot continue: %v", err)
 		}
 		b.entryPrice = filledPrice
+
+		// Initialize trailing stops with the actual position direction
+		b.initializeTrailingStopForDirection(filledPrice, positionDirection)
 	}
 
 	b.mutex.RLock()
@@ -258,11 +517,12 @@ func (b *GridTradingBot) enterMarketAndSetupGrid() error {
 
 	if isEstablished {
 		logger.S().Info("Initial position confirmed, setting up grid orders...")
-		err := b.setupInitialGrid(b.entryPrice)
+		direction := b.getPositionDirection()
+		err := b.setupGridForDirection(b.entryPrice, direction)
 		if err != nil {
 			return fmt.Errorf("initial grid setup failed: %v", err)
 		}
-		logger.S().Info("--- New cycle grid setup complete ---")
+		logger.S().Infof("--- New cycle grid setup complete for %s strategy ---", direction)
 	} else {
 		logger.S().Error("CRITICAL: Base position not marked as established, cannot place grid orders.")
 	}

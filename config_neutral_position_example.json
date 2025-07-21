@@ -1,0 +1,78 @@
+{
+  "_comment": "=== NEUTRAL HEDGE MODE STRATEGY ===",
+  "_description": "No directional bias - profits from volatility",
+  
+  "trading_mode": "futures",
+  "position_direction": "NEUTRAL",
+  "symbol": "ETHUSDT",
+  "is_testnet": true,
+  
+  "_comment_position": "Neutral/hedge configuration",
+  "hedge_mode": true,
+  "leverage": 5,
+  "margin_type": "CROSSED",
+  "initial_investment": 2000.0,
+  
+  "_comment_grid": "Balanced grid for volatility trading",
+  "grid_spacing": 0.005,
+  "grid_quantity": 0.005,
+  "active_orders_count": 10,
+  "wallet_exposure_limit": 0.6,
+  "min_notional_value": 10.0,
+  "return_rate": 0.05,
+  "grid_count": 80,
+  
+  "_comment_risk": "Balanced risk for neutral strategy",
+  "enable_trailing_up": true,
+  "trailing_up_distance": 0.01,
+  "enable_trailing_down": true,
+  "trailing_down_distance": 0.01,
+  "trailing_type": "percentage",
+  
+  "_comment_api": "Futures API configuration",
+  "live_api_url": "https://fapi.binance.com",
+  "live_ws_url": "wss://fstream.binance.com",
+  "testnet_api_url": "https://testnet.binancefuture.com",
+  "testnet_ws_url": "wss://stream.binancefuture.com",
+  
+  "_comment_retry": "Retry configuration",
+  "retry_attempts": 5,
+  "retry_initial_delay_ms": 1000,
+  
+  "_comment_websocket": "WebSocket configuration",
+  "websocket_ping_interval_sec": 30,
+  "websocket_pong_timeout_sec": 75,
+  
+  "log": {
+    "level": "info",
+    "output": "both",
+    "file": "logs/grid-bot-neutral.log",
+    "max_size": 10,
+    "max_backups": 5,
+    "max_age": 30,
+    "compress": false
+  },
+  
+  "_strategy_notes": [
+    "NEUTRAL strategy profits from price oscillations",
+    "Equal distribution of BUY and SELL orders",
+    "Requires hedge_mode: true for both LONG and SHORT positions",
+    "Suitable for ranging/sideways markets",
+    "Lower leverage reduces risk in volatile conditions",
+    "Tight grid spacing captures more price movements"
+  ],
+  
+  "_neutral_features": [
+    "Balanced 50/50 BUY/SELL order distribution",
+    "Profits from volatility in both directions",
+    "Hedge mode allows simultaneous LONG/SHORT positions",
+    "Symmetric trailing stop configuration",
+    "Higher order count for more trading opportunities"
+  ],
+  
+  "_market_conditions": [
+    "Best for: Ranging/sideways markets with high volatility",
+    "Avoid: Strong trending markets (up or down)",
+    "Optimal: Markets with regular oscillations around a mean"
+  ]
+}
