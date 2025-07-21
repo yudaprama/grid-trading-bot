@@ -36,6 +36,19 @@ type Config struct {
 	TrailingUpDistance       float64   `json:"trailing_up_distance"`                  // 追踪止盈距离
 	TrailingDownDistance     float64   `json:"trailing_down_distance"`                // 追踪止损距离
 	TrailingType             string    `json:"trailing_type"`                         // 追踪类型: "percentage" 或 "absolute"
+
+	// Trading Mode Configuration
+	TradingMode              string    `json:"trading_mode"`                          // 交易模式: "futures" 或 "spot"
+
+	// Spot Trading Configuration (only used when TradingMode == "spot")
+	BaseAsset                string    `json:"base_asset,omitempty"`                  // 基础资产 (如 BTC)
+	QuoteAsset               string    `json:"quote_asset,omitempty"`                 // 计价资产 (如 USDT)
+	InitialBaseAmount        float64   `json:"initial_base_amount,omitempty"`         // 初始基础资产数量
+	InitialQuoteAmount       float64   `json:"initial_quote_amount,omitempty"`        // 初始计价资产数量
+	SpotAPIURL               string    `json:"spot_api_url,omitempty"`                // 现货API地址
+	SpotWSURL                string    `json:"spot_ws_url,omitempty"`                 // 现货WebSocket地址
+	SpotTestnetAPIURL        string    `json:"spot_testnet_api_url,omitempty"`        // 现货测试网API地址
+	SpotTestnetWSURL         string    `json:"spot_testnet_ws_url,omitempty"`         // 现货测试网WebSocket地址
 	RetryInitialDelayMs      int       `json:"retry_initial_delay_ms"`                // 新增: 重试前的初始延迟毫秒数
 	WebSocketPingIntervalSec int       `json:"websocket_ping_interval_sec,omitempty"` // 新增: WebSocket Ping消息发送间隔(秒)
 	WebSocketPongTimeoutSec  int       `json:"websocket_pong_timeout_sec,omitempty"`  // 新增: WebSocket Pong消息超时时间(秒)
@@ -63,6 +76,7 @@ type LogConfig struct {
 
 // AccountInfo defines the account information for Binance
 type AccountInfo struct {
+	// Futures-specific fields
 	TotalWalletBalance string `json:"totalWalletBalance"`
 	AvailableBalance   string `json:"availableBalance"`
 	Assets             []struct {
@@ -76,6 +90,17 @@ type AccountInfo struct {
 		OpenOrderInitialMargin string `json:"openOrderInitialMargin"`
 		MaxWithdrawAmount      string `json:"maxWithdrawAmount"`
 	} `json:"assets"`
+
+	// Spot-specific fields
+	MakerCommission  int    `json:"makerCommission,omitempty"`
+	TakerCommission  int    `json:"takerCommission,omitempty"`
+	BuyerCommission  int    `json:"buyerCommission,omitempty"`
+	SellerCommission int    `json:"sellerCommission,omitempty"`
+	CanTrade         bool   `json:"canTrade,omitempty"`
+	CanWithdraw      bool   `json:"canWithdraw,omitempty"`
+	CanDeposit       bool   `json:"canDeposit,omitempty"`
+	UpdateTime       int64  `json:"updateTime,omitempty"`
+	AccountType      string `json:"accountType,omitempty"`
 }
 
 // Position defines the position information
@@ -114,6 +139,7 @@ type Order struct {
 	IcebergQty    string `json:"icebergQty"`
 	Time          int64  `json:"time"`
 	UpdateTime    int64  `json:"updateTime"`
+	TransactTime  int64  `json:"transactTime"` // For spot trading
 	IsWorking     bool   `json:"isWorking"`
 	WorkingType   string `json:"workingType"`
 	OrigType      string `json:"origType"`
@@ -166,6 +192,7 @@ type ExchangeInfo struct {
 // SymbolInfo holds trading rules for a single symbol
 type SymbolInfo struct {
 	Symbol  string   `json:"symbol"`
+	Status  string   `json:"status"`  // For spot trading
 	Filters []Filter `json:"filters"`
 }
 
@@ -176,8 +203,13 @@ type Filter struct {
 	StepSize    string `json:"stepSize,omitempty"`    // For LOT_SIZE
 	MinQty      string `json:"minQty,omitempty"`      // For LOT_SIZE
 	MaxQty      string `json:"maxQty,omitempty"`      // For LOT_SIZE
+	MinPrice    string `json:"minPrice,omitempty"`    // For PRICE_FILTER
+	MaxPrice    string `json:"maxPrice,omitempty"`    // For PRICE_FILTER
 	MinNotional string `json:"minNotional,omitempty"` // For MIN_NOTIONAL
 }
+
+// SymbolFilter is an alias for Filter (for compatibility)
+type SymbolFilter = Filter
 
 // TrailingStopState represents the current state of trailing stops for a position
 type TrailingStopState struct {
@@ -385,4 +417,19 @@ type PositionUpdate struct {
 	IsolatedWallet      string `json:"iw"`  // Isolated wallet balance
 	PositionSide        string `json:"ps"`  // Position side (BOTH, LONG, SHORT)
 	BreakEvenPrice      string `json:"bep"` // Break-even price
+}
+
+// SpotBalance represents a spot trading balance
+type SpotBalance struct {
+	Asset  string `json:"asset"`  // Asset symbol (BTC, USDT, etc.)
+	Free   string `json:"free"`   // Available balance
+	Locked string `json:"locked"` // Locked in orders
+}
+
+// TradingFees represents the fee structure for trading
+type TradingFees struct {
+	MakerFee    float64 `json:"maker_fee"`    // Maker fee rate
+	TakerFee    float64 `json:"taker_fee"`    // Taker fee rate
+	Symbol      string  `json:"symbol"`       // Trading symbol
+	TradingMode string  `json:"trading_mode"` // "futures" or "spot"
 }

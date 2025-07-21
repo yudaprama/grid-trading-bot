@@ -621,3 +621,34 @@ func (e *BacktestExchange) ConnectWebSocket(listenKey string) (*websocket.Conn, 
 	// In backtesting mode, do not establish a real WebSocket connection
 	return nil, nil
 }
+
+// Spot-specific methods (not supported in backtest mode)
+func (e *BacktestExchange) GetSpotBalances() ([]models.SpotBalance, error) {
+	return nil, fmt.Errorf("GetSpotBalances is not supported in backtest mode")
+}
+
+func (e *BacktestExchange) GetSpotBalance(asset string) (float64, error) {
+	return 0, fmt.Errorf("GetSpotBalance is not supported in backtest mode")
+}
+
+func (e *BacktestExchange) GetSpotTradingFees(symbol string) (*models.TradingFees, error) {
+	return nil, fmt.Errorf("GetSpotTradingFees is not supported in backtest mode")
+}
+
+// GetTradingMode returns the trading mode
+func (e *BacktestExchange) GetTradingMode() string {
+	return "futures" // Backtest currently only supports futures
+}
+
+// SupportsTradingMode checks if a trading mode is supported
+func (e *BacktestExchange) SupportsTradingMode(mode string) bool {
+	return mode == "futures" // Backtest currently only supports futures
+}
+
+// SetTradingMode sets the trading mode
+func (e *BacktestExchange) SetTradingMode(mode string) error {
+	if mode != "futures" {
+		return fmt.Errorf("backtest exchange currently only supports futures trading mode")
+	}
+	return nil
+}

@@ -5,6 +5,7 @@ import (
 	"github.com/yudaprama/grid-trading-bot/internal/idgenerator"
 	"github.com/yudaprama/grid-trading-bot/internal/logger"
 	"github.com/yudaprama/grid-trading-bot/internal/models"
+	"github.com/yudaprama/grid-trading-bot/internal/trading"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ type NormalizedEvent struct {
 type GridTradingBot struct {
 	config                  *models.Config
 	exchange                exchange.Exchange
+	tradingMode             trading.TradingMode
 	wsConn                  *websocket.Conn
 	listenKey               string
 	gridLevels              []models.GridLevel
@@ -78,6 +80,19 @@ func NewGridTradingBot(config *models.Config, ex exchange.Exchange, isBacktest b
 		isHalted:                false,
 		trailingStopState:       &models.TrailingStopState{IsActive: false},
 		trailingAdjustments:     make([]models.TrailingStopAdjustment, 0),
+	}
+
+	// Initialize trading mode
+	if modeAwareEx, ok := ex.(trading.ModeAwareExchange); ok {
+		factory := trading.NewTradingModeFactory(modeAwareEx, config)
+		tradingMode, err := factory.CreateTradingMode()
+		if err != nil {
+			logger.S().Fatalf("Could not create trading mode: %v", err)
+		}
+		bot.tradingMode = tradingMode
+		logger.S().Infof("Initialized %s trading mode", tradingMode.GetTradingMode())
+	} else {
+		logger.S().Warn("Exchange does not support mode-aware trading, using legacy mode")
 	}
 
 	symbolInfo, err := ex.GetSymbolInfo(config.Symbol)

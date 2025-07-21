@@ -26,6 +26,10 @@
   "trailing_down_distance": 0.02,
   "trailing_type": "percentage",
   "_comment_trailing_explanation": "trailing_up_distance: 2.5% trailing take profit, trailing_down_distance: 2% trailing stop loss",
+
+  "_comment_trading_mode": "=== TRADING MODE CONFIGURATION ===",
+  "trading_mode": "futures",
+  "_comment_trading_mode_explanation": "Set to 'futures' for futures trading or 'spot' for spot trading",
   
   "log": {
   	"level": "info",

@@ -21,28 +21,40 @@ type NewOrderRequest struct {
 // Exchange defines the common methods that all exchange implementations must provide.
 // This allows the trading bot to seamlessly switch between live trading and backtesting.
 type Exchange interface {
+	// Common methods for both futures and spot
 	GetPrice(symbol string) (float64, error)
-	GetPositions(symbol string) ([]models.Position, error)
 	PlaceOrder(symbol, side, orderType string, quantity, price float64, clientOrderID string) (*models.Order, error)
 	CancelOrder(symbol string, orderID int64) error
+	GetAccountInfo() (*models.AccountInfo, error)
+	CancelAllOpenOrders(symbol string) error
+	GetOrderStatus(symbol string, orderID int64) (*models.Order, error)
+	GetCurrentTime() time.Time
+	GetSymbolInfo(symbol string) (*models.SymbolInfo, error)
+	GetOpenOrders(symbol string) ([]models.Order, error)
+	GetServerTime() (int64, error)
+	GetLastTrade(symbol string, orderID int64) (*models.Trade, error)
+	CreateListenKey() (string, error)
+	KeepAliveListenKey(listenKey string) error
+	ConnectWebSocket(listenKey string) (*websocket.Conn, error)
+
+	// Futures-specific methods (will return error for spot mode)
+	GetPositions(symbol string) ([]models.Position, error)
 	SetLeverage(symbol string, leverage int) error
 	SetPositionMode(isHedgeMode bool) error
 	GetPositionMode() (bool, error)
 	SetMarginType(symbol string, marginType string) error
 	GetMarginType(symbol string) (string, error)
-	GetAccountInfo() (*models.AccountInfo, error)
-	CancelAllOpenOrders(symbol string) error
-	GetOrderStatus(symbol string, orderID int64) (*models.Order, error)
-	GetCurrentTime() time.Time
-	// GetAccountState get the account state, including total position value and account equity
 	GetAccountState(symbol string) (positionValue float64, accountEquity float64, err error)
-	GetSymbolInfo(symbol string) (*models.SymbolInfo, error)
-	GetOpenOrders(symbol string) ([]models.Order, error) // Get all open orders
-	GetServerTime() (int64, error)                       // Get server time
-	GetLastTrade(symbol string, orderID int64) (*models.Trade, error)
 	GetMaxWalletExposure() float64
-	CreateListenKey() (string, error)
-	KeepAliveListenKey(listenKey string) error
-	GetBalance() (float64, error)
-	ConnectWebSocket(listenKey string) (*websocket.Conn, error)
+	GetBalance() (float64, error) // For futures, returns USDT balance
+
+	// Spot-specific methods (will return error for futures mode)
+	GetSpotBalances() ([]models.SpotBalance, error)
+	GetSpotBalance(asset string) (float64, error)
+	GetSpotTradingFees(symbol string) (*models.TradingFees, error)
+
+	// Mode detection and configuration
+	GetTradingMode() string
+	SupportsTradingMode(mode string) bool
+	SetTradingMode(mode string) error
 }

@@ -74,6 +74,34 @@ func (m *MockExchange) KeepAliveListenKey(listenKey string) error { return nil }
 func (m *MockExchange) GetBalance() (float64, error) { return 1000.0, nil }
 func (m *MockExchange) ConnectWebSocket(listenKey string) (*websocket.Conn, error) { return nil, nil }
 
+// New methods required by the updated Exchange interface
+func (m *MockExchange) GetSpotBalances() ([]models.SpotBalance, error) {
+	return nil, fmt.Errorf("GetSpotBalances not supported in mock exchange")
+}
+
+func (m *MockExchange) GetSpotBalance(asset string) (float64, error) {
+	return 0, fmt.Errorf("GetSpotBalance not supported in mock exchange")
+}
+
+func (m *MockExchange) GetSpotTradingFees(symbol string) (*models.TradingFees, error) {
+	return nil, fmt.Errorf("GetSpotTradingFees not supported in mock exchange")
+}
+
+func (m *MockExchange) GetTradingMode() string {
+	return "futures" // Mock exchange simulates futures trading
+}
+
+func (m *MockExchange) SupportsTradingMode(mode string) bool {
+	return mode == "futures"
+}
+
+func (m *MockExchange) SetTradingMode(mode string) error {
+	if mode != "futures" {
+		return fmt.Errorf("mock exchange only supports futures mode")
+	}
+	return nil
+}
+
 func formatFloat(f float64) string {
 	return fmt.Sprintf("%.4f", f)
 }

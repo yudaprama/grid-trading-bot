@@ -539,3 +539,34 @@ func (e *LiveExchange) ConnectWebSocket(listenKey string) (*websocket.Conn, erro
 	e.wsConn = conn
 	return conn, nil
 }
+
+// Spot-specific methods (not supported in futures mode)
+func (e *LiveExchange) GetSpotBalances() ([]models.SpotBalance, error) {
+	return nil, fmt.Errorf("GetSpotBalances is not supported in futures trading mode")
+}
+
+func (e *LiveExchange) GetSpotBalance(asset string) (float64, error) {
+	return 0, fmt.Errorf("GetSpotBalance is not supported in futures trading mode")
+}
+
+func (e *LiveExchange) GetSpotTradingFees(symbol string) (*models.TradingFees, error) {
+	return nil, fmt.Errorf("GetSpotTradingFees is not supported in futures trading mode")
+}
+
+// GetTradingMode returns the trading mode
+func (e *LiveExchange) GetTradingMode() string {
+	return "futures"
+}
+
+// SupportsTradingMode checks if a trading mode is supported
+func (e *LiveExchange) SupportsTradingMode(mode string) bool {
+	return mode == "futures"
+}
+
+// SetTradingMode sets the trading mode
+func (e *LiveExchange) SetTradingMode(mode string) error {
+	if mode != "futures" {
+		return fmt.Errorf("futures exchange only supports futures trading mode")
+	}
+	return nil
+}

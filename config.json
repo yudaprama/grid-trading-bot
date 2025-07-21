@@ -23,6 +23,7 @@
   "trailing_up_distance": 0.02,
   "trailing_down_distance": 0.015,
   "trailing_type": "percentage",
+  "trading_mode": "futures",
   "log": {
   	"level": "info",
   	"output": "both",

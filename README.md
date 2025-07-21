@@ -1,15 +1,16 @@
-# Binance Futures Grid Trading Bot
+# Binance Unified Grid Trading Bot
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yudaprama/grid-trading-bot)](https://goreportcard.com/report/github.com/yudaprama/grid-trading-bot)
 
-A high-frequency grid trading bot for Binance Futures, written in Go. It supports both live trading and historical data backtesting to help you develop and verify your trading strategies.
+A high-frequency grid trading bot for **both Binance Futures and Spot trading**, written in Go. It supports live trading and historical data backtesting to help you develop and verify your trading strategies across different trading modes.
 
-> **⚠️ Important**: This bot is designed exclusively for **Binance Futures trading** and does not support Binance Spot trading. It uses leverage, margin modes, and position management features specific to futures contracts.
+> **🚀 New**: This bot now supports **both Binance Futures and Spot trading** through a unified architecture! Choose your preferred trading mode based on your risk tolerance and strategy requirements.
 
 ## 🚀 Features
 
+- **🔄 Unified Trading Modes**: Support for both Futures and Spot trading
 - **🔴 Live Trading Mode**: Connects to Binance API to trade in real-time
 - **📊 Backtesting Mode**: Test your strategy on historical K-line data
 - **📥 Automatic Data Downloader**: Downloads historical data for backtesting automatically
@@ -24,6 +25,7 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 ## 📋 Table of Contents
 
 - [Trading Type Support](#trading-type-support)
+- [Quick Start](#quick-start)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
   - [Download Pre-built Binaries](#download-pre-built-binaries)
@@ -38,6 +40,7 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 - [Trailing Stops](#trailing-stops)
 - [Architecture](#architecture)
 - [API Setup](#api-setup)
+- [Unified Architecture](#unified-architecture)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Safety and Disclaimer](#safety-and-disclaimer)
@@ -45,7 +48,7 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 
 ## Trading Type Support
 
-This bot is designed exclusively for **Binance Futures trading** and does **NOT** support Binance Spot trading.
+This bot now supports **both Binance Futures and Spot trading** through a unified architecture!
 
 ### ✅ **Supported: Binance Futures**
 - **Leverage Trading**: Supports leverage up to 125x (configurable)
@@ -54,26 +57,98 @@ This bot is designed exclusively for **Binance Futures trading** and does **NOT*
 - **Futures Contracts**: USDT-M perpetual futures (e.g., BTCUSDT, ETHUSDT)
 - **Advanced Features**: Position risk management, liquidation protection
 - **API Endpoints**: Uses Binance Futures API (`/fapi/` endpoints)
+- **Configuration**: `"trading_mode": "futures"`
 
-### ❌ **Not Supported: Binance Spot**
-- **Spot Trading**: No support for spot market trading
-- **Spot API**: Does not use spot API endpoints (`/api/` endpoints)
-- **Spot Features**: No support for spot-specific features like savings, staking, etc.
+### ✅ **Supported: Binance Spot (NEW!)**
+- **Spot Trading**: Full support for spot market trading
+- **No Leverage**: 1:1 trading with owned assets
+- **Balance Management**: Multi-asset balance tracking (Base + Quote)
+- **Risk Management**: Conservative balance-based risk controls
+- **Spot Contracts**: All available spot pairs (e.g., BTCUSDT, ETHUSDT)
+- **API Endpoints**: Uses Binance Spot API (`/api/` endpoints)
+- **Configuration**: `"trading_mode": "spot"`
 
-### 🔧 **Futures-Specific Features Used**
+### 🔧 **Mode-Specific Features**
+
+#### **Futures Mode Features:**
 - **Position Management**: Tracks open positions and unrealized P&L
-- **Leverage Control**: Automatic leverage setting and management
+- **Leverage Control**: Automatic leverage setting and management (up to 125x)
 - **Margin Type**: Configurable margin mode (CROSSED/ISOLATED)
 - **Position Mode**: Support for hedge mode and one-way mode
 - **Risk Management**: Built-in liquidation prevention and exposure limits
+- **API**: Binance Futures API (`/fapi/` endpoints)
+
+#### **Spot Mode Features:**
+- **Balance Management**: Multi-asset balance tracking (Base + Quote)
+- **No Leverage**: 1:1 trading with owned assets
+- **Inventory Control**: Smart asset allocation and rebalancing
+- **Conservative Risk**: Balance-based risk management (no liquidation risk)
+- **Grid Strategy**: Inventory-centric grid trading approach
+- **API**: Binance Spot API (`/api/` endpoints)
 
 ### 📋 **Supported Trading Pairs**
-Any USDT-M perpetual futures contract available on Binance Futures, including:
+
+#### **Futures Mode:**
+Any USDT-M perpetual futures contract available on Binance Futures:
 - Major cryptocurrencies: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`
 - Altcoins: `ADAUSDT`, `DOTUSDT`, `LINKUSDT`
 - And many more available on Binance Futures
 
-> **💡 Note**: If you need spot trading functionality, you would need to modify the bot to use Binance Spot API endpoints (`/api/` instead of `/fapi/`) and remove futures-specific features like leverage and position management.
+#### **Spot Mode:**
+Any spot trading pair available on Binance Spot:
+- Major pairs: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`
+- Altcoin pairs: `ADAUSDT`, `DOTUSDT`, `LINKUSDT`
+- Cross-asset pairs: `BTCETH`, `ETHBNB`, etc.
+
+## Quick Start
+
+### � **Futures Trading (High Leverage)**
+```bash
+# 1. Set up API keys
+export BINANCE_API_KEY="your-api-key"
+export BINANCE_SECRET_KEY="your-secret-key"
+
+# 2. Use futures configuration (default)
+./grid-bot --mode live --config config.json
+```
+
+### 💰 **Spot Trading (No Leverage)**
+```bash
+# 1. Set up API keys (same as above)
+export BINANCE_API_KEY="your-api-key"
+export BINANCE_SECRET_KEY="your-secret-key"
+
+# 2. Use spot configuration
+./grid-bot --mode live --config config_spot_trading_example.json
+```
+
+### 📊 **Configuration Examples**
+
+**Futures Configuration:**
+```json
+{
+  "trading_mode": "futures",
+  "symbol": "BTCUSDT",
+  "leverage": 10,
+  "margin_type": "CROSSED",
+  "initial_investment": 1000.0,
+  "grid_spacing": 0.01,
+  "grid_quantity": 0.001
+}
+```
+
+**Spot Configuration:**
+```json
+{
+  "trading_mode": "spot",
+  "symbol": "BTCUSDT",
+  "base_asset": "BTC",
+  "quote_asset": "USDT",
+  "initial_base_amount": 0.1,
+  "initial_quote_amount": 1000.0,
+  "grid_spacing": 0.01
+}
+```
 
 ## Prerequisites
 
@@ -501,6 +576,85 @@ For safe testing, use Binance Testnet:
 2. Create testnet API keys
 3. Set `is_testnet: true` in your config
 4. Use testnet keys in your environment variables
+
+## Unified Architecture
+
+### 🏗️ **Architecture Overview**
+
+The bot now uses a **unified architecture** that supports both Futures and Spot trading through a clean abstraction layer:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Grid Trading Bot                         │
+├─────────────────────────────────────────────────────────────┤
+│                Trading Mode Abstraction                     │
+│  ┌─────────────────────┐    ┌─────────────────────────────┐ │
+│  │   Futures Mode      │    │      Spot Mode             │ │
+│  │                     │    │                            │ │
+│  │ • Position tracking │    │ • Balance management       │ │
+│  │ • Leverage control  │    │ • Asset inventory          │ │
+│  │ • Margin management │    │ • Conservative risk        │ │
+│  │ • Liquidation risk  │    │ • No liquidation risk      │ │
+│  └─────────────────────┘    └─────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                Mode-Aware Exchange Layer                    │
+│  ┌─────────────────────┐    ┌─────────────────────────────┐ │
+│  │  Futures Exchange   │    │    Spot Exchange           │ │
+│  │                     │    │                            │ │
+│  │ • /fapi/ endpoints  │    │ • /api/ endpoints          │ │
+│  │ • Position API      │    │ • Balance API              │ │
+│  │ • Margin API        │    │ • Account API              │ │
+│  └─────────────────────┘    └─────────────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                    Binance API                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 🔄 **Key Benefits**
+
+1. **Single Codebase**: One bot supports both trading modes
+2. **Unified Interface**: Same commands work for both modes
+3. **Shared Logic**: Common grid trading algorithms
+4. **Mode-Specific Optimizations**: Tailored risk management per mode
+5. **Easy Switching**: Change modes via configuration
+6. **Backward Compatible**: Existing futures setups continue to work
+7. **Extensible**: Easy to add new trading modes in the future
+
+### 📊 **Mode Comparison**
+
+| Feature | Futures Mode | Spot Mode |
+|---------|-------------|-----------|
+| **Leverage** | Up to 125x | None (1:1) |
+| **Risk Level** | High (liquidation) | Medium (balance-only) |
+| **Capital Efficiency** | High | Lower |
+| **Asset Requirements** | USDT margin | Base + Quote assets |
+| **Position Tracking** | Position-based P&L | Balance-based profit |
+| **API Endpoints** | `/fapi/` | `/api/` |
+| **Grid Strategy** | Position-centric | Inventory-centric |
+| **Suitable For** | Experienced traders | Conservative traders |
+
+### 🛠️ **Implementation Details**
+
+#### **Core Components:**
+- **TradingMode Interface**: Unified operations across modes
+- **ModeAwareExchange**: Intelligent exchange routing
+- **Configuration System**: Mode-specific parameters
+- **Risk Management**: Mode-appropriate controls
+
+#### **Files Structure:**
+```
+internal/
+├── trading/
+│   ├── trading_mode.go      # Core interface
+│   ├── futures_mode.go      # Futures implementation
+│   └── spot_mode.go         # Spot implementation
+├── exchange/
+│   ├── mode_aware_exchange.go  # Unified exchange wrapper
+│   ├── spot_exchange.go        # Spot API implementation
+│   └── live_exchange.go        # Futures API (enhanced)
+└── models/
+    └── models.go               # Enhanced with spot models
+```
 
 ## Troubleshooting
 

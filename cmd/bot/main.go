@@ -133,74 +133,118 @@ func runLiveMode(cfg *models.Config) {
 		logger.S().Fatal("Error: BINANCE_API_KEY and BINANCE_SECRET_KEY environment variables must be set.")
 	}
 
-	// Set API URLs based on configuration
+	// Set API URLs based on configuration and trading mode
 	var baseURL, wsBaseURL string
-	if cfg.IsTestnet {
-		baseURL = cfg.TestnetAPIURL
-		wsBaseURL = cfg.TestnetWSURL
-		logger.S().Info("Using Binance testnet...")
+	if cfg.TradingMode == "spot" {
+		// Use spot API URLs
+		if cfg.IsTestnet {
+			baseURL = cfg.SpotTestnetAPIURL
+			wsBaseURL = cfg.SpotTestnetWSURL
+			if baseURL == "" {
+				baseURL = "https://testnet.binance.vision"
+			}
+			if wsBaseURL == "" {
+				wsBaseURL = "wss://testnet.binance.vision"
+			}
+			logger.S().Info("Using Binance Spot testnet...")
+		} else {
+			baseURL = cfg.SpotAPIURL
+			wsBaseURL = cfg.SpotWSURL
+			if baseURL == "" {
+				baseURL = "https://api.binance.com"
+			}
+			if wsBaseURL == "" {
+				wsBaseURL = "wss://stream.binance.com"
+			}
+			logger.S().Info("Using Binance Spot production network...")
+		}
 	} else {
-		baseURL = cfg.LiveAPIURL
-		wsBaseURL = cfg.LiveWSURL
-		logger.S().Info("Using Binance production network...")
+		// Use futures API URLs (default)
+		if cfg.IsTestnet {
+			baseURL = cfg.TestnetAPIURL
+			wsBaseURL = cfg.TestnetWSURL
+			logger.S().Info("Using Binance Futures testnet...")
+		} else {
+			baseURL = cfg.LiveAPIURL
+			wsBaseURL = cfg.LiveWSURL
+			logger.S().Info("Using Binance Futures production network...")
+		}
 	}
 	cfg.BaseURL = baseURL
 	cfg.WSBaseURL = wsBaseURL
 
-	// Initialize exchange
-	liveExchange, err := exchange.NewLiveExchange(apiKey, secretKey, cfg.BaseURL, cfg.WSBaseURL, logger.L())
-	if err != nil {
-		logger.S().Fatalf("Failed to initialize exchange: %v", err)
+	// Initialize exchanges based on trading mode
+	var modeAwareExchange *exchange.ModeAwareExchangeImpl
+
+	if cfg.TradingMode == "spot" {
+		// Initialize enhanced spot exchange using go-binance SDK
+		spotExchange := exchange.NewEnhancedSpotExchange(apiKey, secretKey, cfg)
+		modeAwareExchange = exchange.NewModeAwareExchange(nil, cfg)
+		modeAwareExchange.SetSpotExchange(spotExchange)
+		logger.S().Info("Initialized Enhanced Spot trading exchange using go-binance SDK")
+	} else {
+		// Initialize futures exchange (default)
+		futuresExchange, err := exchange.NewLiveExchange(apiKey, secretKey, cfg.BaseURL, cfg.WSBaseURL, logger.L())
+		if err != nil {
+			logger.S().Fatalf("Failed to initialize futures exchange: %v", err)
+		}
+		modeAwareExchange = exchange.NewModeAwareExchange(futuresExchange, cfg)
+		logger.S().Info("Initialized Futures trading exchange")
 	}
 
 	// --- Initialize exchange settings ---
 	logger.S().Info("Initializing exchange settings...")
 
-	// 1. Set position mode (one-way/hedge)
-	if _, err := liveExchange.GetAccountInfo(); err != nil {
-		logger.S().Fatalf("Failed to call GetAccountInfo: %v", err)
-		return
-	}
-
-	// 1. Set position mode (one-way/hedge)
-	currentHedgeMode, err := liveExchange.GetPositionMode()
-	if err != nil {
-		logger.S().Fatalf("Failed to get current position mode: %v", err)
-		return
-	}
-
-	if currentHedgeMode != cfg.HedgeMode {
-		logger.S().Infof("Current position mode (HedgeMode=%v) doesn't match configuration (HedgeMode=%v), attempting to update...", currentHedgeMode, cfg.HedgeMode)
-		if err := liveExchange.SetPositionMode(cfg.HedgeMode); err != nil {
-			logger.S().Fatalf("Failed to set position mode: %v", err)
+	// Only initialize futures-specific settings for futures mode
+	if cfg.TradingMode == "futures" {
+		// 1. Set position mode (one-way/hedge)
+		if _, err := modeAwareExchange.GetAccountInfo(); err != nil {
+			logger.S().Fatalf("Failed to call GetAccountInfo: %v", err)
 			return
 		}
-		logger.S().Infof("Position mode successfully updated to: HedgeMode=%v", cfg.HedgeMode)
-	} else {
-		logger.S().Infof("Current position mode is already target mode (HedgeMode=%v), no change needed.", cfg.HedgeMode)
-	}
 
-	// 2. Set margin mode (cross/isolated)
-	currentMarginType, err := liveExchange.GetMarginType(cfg.Symbol)
-	if err != nil {
-		logger.S().Fatalf("Failed to get current margin mode: %v", err)
-		return
-	}
-
-	// Compare ignoring case
-	if !strings.EqualFold(currentMarginType, cfg.MarginType) {
-		logger.S().Infof("Current margin mode (%s) doesn't match configuration (%s), attempting to update...", currentMarginType, cfg.MarginType)
-		if err := liveExchange.SetMarginType(cfg.Symbol, cfg.MarginType); err != nil {
-			logger.S().Fatalf("Failed to set margin mode: %v", err)
+		// 1. Set position mode (one-way/hedge)
+		currentHedgeMode, err := modeAwareExchange.GetPositionMode()
+		if err != nil {
+			logger.S().Fatalf("Failed to get current position mode: %v", err)
 			return
 		}
-		logger.S().Infof("Margin mode successfully updated to: %s", cfg.MarginType)
+
+		if currentHedgeMode != cfg.HedgeMode {
+			logger.S().Infof("Current position mode (HedgeMode=%v) doesn't match configuration (HedgeMode=%v), attempting to update...", currentHedgeMode, cfg.HedgeMode)
+			if err := modeAwareExchange.SetPositionMode(cfg.HedgeMode); err != nil {
+				logger.S().Fatalf("Failed to set position mode: %v", err)
+				return
+			}
+			logger.S().Infof("Position mode successfully updated to: HedgeMode=%v", cfg.HedgeMode)
+		} else {
+			logger.S().Infof("Current position mode is already target mode (HedgeMode=%v), no change needed.", cfg.HedgeMode)
+		}
+
+		// 2. Set margin mode (cross/isolated)
+		currentMarginType, err := modeAwareExchange.GetMarginType(cfg.Symbol)
+		if err != nil {
+			logger.S().Fatalf("Failed to get current margin mode: %v", err)
+			return
+		}
+
+		// Compare ignoring case
+		if !strings.EqualFold(currentMarginType, cfg.MarginType) {
+			logger.S().Infof("Current margin mode (%s) doesn't match configuration (%s), attempting to update...", currentMarginType, cfg.MarginType)
+			if err := modeAwareExchange.SetMarginType(cfg.Symbol, cfg.MarginType); err != nil {
+				logger.S().Fatalf("Failed to set margin mode: %v", err)
+				return
+			}
+			logger.S().Infof("Margin mode successfully updated to: %s", cfg.MarginType)
+		} else {
+			logger.S().Infof("Current margin mode is already target mode (%s), no change needed.", cfg.MarginType)
+		}
 	} else {
-		logger.S().Infof("Current margin mode is already target mode (%s), no change needed.", cfg.MarginType)
+		logger.S().Info("Spot trading mode - skipping futures-specific settings")
 	}
 
 	// Initialize bot
-	gridBot := bot.NewGridTradingBot(cfg, liveExchange, false)
+	gridBot := bot.NewGridTradingBot(cfg, modeAwareExchange, false)
 
 	// Start bot
 	if err := gridBot.Start(); err != nil {
