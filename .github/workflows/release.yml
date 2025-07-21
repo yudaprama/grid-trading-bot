@@ -15,31 +15,27 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: Build and Release Cross-Platform Binaries
+  build:
+    name: Build Cross-Platform Binaries
     runs-on: ubuntu-latest
-    
+
     strategy:
       matrix:
         include:
           # macOS builds
           - goos: darwin
             goarch: amd64
-            binary_suffix: ""
             asset_name: "grid-bot-darwin-amd64"
           - goos: darwin
             goarch: arm64
-            binary_suffix: ""
             asset_name: "grid-bot-darwin-arm64"
           # Linux builds
           - goos: linux
             goarch: amd64
-            binary_suffix: ""
             asset_name: "grid-bot-linux-amd64"
           # Windows builds
           - goos: windows
             goarch: amd64
-            binary_suffix: ".exe"
             asset_name: "grid-bot-windows-amd64.exe"
 
     steps:
@@ -80,14 +76,45 @@ jobs:
             -o ${{ matrix.asset_name }} \
             ./cmd/bot
 
-      # Upload the binary as a release asset
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      # Upload artifact for the release job
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ./${{ matrix.asset_name }}
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      # Download all build artifacts
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./binaries
+
+      # List downloaded files for debugging
+      - name: List downloaded files
+        run: |
+          find ./binaries -type f -exec ls -la {} \;
+
+      # Flatten the directory structure
+      - name: Prepare binaries
+        run: |
+          mkdir -p ./release-binaries
+          find ./binaries -name "grid-bot-*" -exec cp {} ./release-binaries/ \;
+          ls -la ./release-binaries/
+
+      # Create release and upload all binaries
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./release-binaries/*
           draft: false
           prerelease: false
-          fail_on_unmatched_files: true
           generate_release_notes: true
           make_latest: true
