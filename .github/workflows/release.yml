@@ -10,6 +10,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     name: Build and Release Cross-Platform Binaries
@@ -78,12 +81,10 @@ jobs:
 
       # Upload the binary as a release asset
       - name: Upload release asset
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ./${{ matrix.asset_name }}
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
