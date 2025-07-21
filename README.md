@@ -17,17 +17,22 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 - **📈 Detailed Reporting**: Generates comprehensive performance reports after backtests
 - **🔒 Testnet Support**: Full support for Binance testnet for safe testing
 - **🛡️ Risk Management**: Built-in liquidation prevention and wallet exposure limits
+- **📈 Trailing Stops**: Advanced trailing stop functionality for automated profit-taking and loss-limiting
 
 ## 📋 Table of Contents
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
+  - [Download Pre-built Binaries](#download-pre-built-binaries)
+  - [Build from Source](#build-from-source)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
   - [Configuration File](#configuration-file)
+  - [Trailing Stops Configuration](#trailing-stops-configuration)
 - [Usage](#usage)
   - [Live Trading](#live-trading)
   - [Backtesting](#backtesting)
+- [Trailing Stops](#trailing-stops)
 - [Architecture](#architecture)
 - [API Setup](#api-setup)
 - [Troubleshooting](#troubleshooting)
@@ -42,6 +47,33 @@ A high-frequency grid trading bot for Binance Futures, written in Go. It support
 - **API Keys**: Binance API keys with Futures trading permissions
 
 ## Installation
+
+### Download Pre-built Binaries
+
+The easiest way to get started is to download pre-built binaries from the [GitHub Releases](https://github.com/yudaprama/grid-trading-bot/releases) page.
+
+1. **Go to the releases page:**
+   Visit [https://github.com/yudaprama/grid-trading-bot/releases](https://github.com/yudaprama/grid-trading-bot/releases)
+
+2. **Download the appropriate binary for your platform:**
+   - **macOS (Intel)**: `grid-bot-darwin-amd64`
+   - **macOS (Apple Silicon)**: `grid-bot-darwin-arm64`
+   - **Linux**: `grid-bot-linux-amd64`
+   - **Windows**: `grid-bot-windows-amd64.exe`
+
+3. **Make it executable (macOS/Linux):**
+   ```bash
+   chmod +x grid-bot-darwin-amd64  # or your downloaded binary
+   ```
+
+4. **Run the bot:**
+   ```bash
+   ./grid-bot-darwin-amd64 --help  # or your downloaded binary
+   ```
+
+### Build from Source
+
+If you prefer to build from source or need to modify the code:
 
 1. **Clone the repository:**
    ```bash
@@ -107,6 +139,11 @@ The bot uses a `config.json` file for configuration. Here's the complete structu
 | `maker_fee_rate` | float64 | Maker fee rate for backtesting | `0.0002` |
 | `slippage_rate` | float64 | Slippage rate for backtesting | `0.0005` |
 | `maintenance_margin_rate` | float64 | Maintenance margin rate | `0.005` |
+| `enable_trailing_up` | boolean | Enable trailing take profit functionality | `false` |
+| `enable_trailing_down` | boolean | Enable trailing stop loss functionality | `false` |
+| `trailing_up_distance` | float64 | Distance for trailing up adjustments | `0.02` |
+| `trailing_down_distance` | float64 | Distance for trailing down adjustments | `0.015` |
+| `trailing_type` | string | Distance type: "percentage" or "absolute" | `"percentage"` |
 
 #### Logging Configuration
 
@@ -135,6 +172,32 @@ The `log` section in `config.json` configures logging behavior:
 | `max_backups` | Number of backup files to keep |
 | `max_age` | Maximum age in days before deletion |
 | `compress` | Compress rotated files |
+
+### Trailing Stops Configuration
+
+The bot supports advanced trailing stop functionality to automatically manage profit-taking and loss-limiting:
+
+```json
+{
+  "enable_trailing_up": true,
+  "enable_trailing_down": true,
+  "trailing_up_distance": 0.025,
+  "trailing_down_distance": 0.02,
+  "trailing_type": "percentage"
+}
+```
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `enable_trailing_up` | Enable trailing take profit | `true` |
+| `enable_trailing_down` | Enable trailing stop loss | `true` |
+| `trailing_up_distance` | Distance for trailing up (2.5% = 0.025) | `0.025` |
+| `trailing_down_distance` | Distance for trailing down (2% = 0.02) | `0.02` |
+| `trailing_type` | Distance calculation method | `"percentage"` or `"absolute"` |
+
+**Trailing Types:**
+- **`"percentage"`**: Distance as percentage (e.g., 0.02 = 2%)
+- **`"absolute"`**: Distance as absolute price units (e.g., 2.0 = $2)
 
 ## Usage
 
@@ -211,6 +274,127 @@ After completion, you'll get a detailed report including:
 - 📈 Return on investment (ROI)
 - ⏰ Trading period statistics
 - 📋 Detailed trade history
+
+## Trailing Stops
+
+The bot includes advanced trailing stop functionality to automatically manage profit-taking and loss-limiting. This feature helps lock in profits while allowing for continued favorable price movement.
+
+### Overview
+
+Trailing stops automatically adjust stop loss and take profit levels as the market price moves favorably:
+
+1. **Trailing Up (Trailing Take Profit)**: Adjusts take profit levels upward as price moves favorably
+2. **Trailing Down (Trailing Stop Loss)**: Adjusts stop loss levels to follow price movements and limit losses
+
+### How It Works
+
+#### Trailing Up (Take Profit)
+
+For LONG positions:
+- Monitors the highest price reached since position entry
+- When price moves up, adjusts the take profit level to stay below the highest price
+- Only moves the take profit level higher (never lower)
+- Helps lock in profits while allowing for continued upward movement
+
+**Example with 2% trailing up distance:**
+- Entry price: $100
+- Price rises to $110 → Take profit set at $107.80 (110 × 0.98)
+- Price rises to $115 → Take profit adjusted to $112.70 (115 × 0.98)
+- If price falls back to $112, the take profit at $112.70 would be triggered
+
+#### Trailing Down (Stop Loss)
+
+For LONG positions:
+- Monitors price movements to limit losses
+- Adjusts stop loss level to follow the lowest price reached
+- Helps limit losses while allowing for potential recovery
+
+**Example with 1.5% trailing down distance:**
+- Entry price: $100
+- Price falls to $95 → Stop loss set at $93.58 (95 × 0.985)
+- Price falls to $90 → Stop loss adjusted to $88.65 (90 × 0.985)
+
+### Configuration Examples
+
+#### Conservative Setup (Recommended for beginners)
+```json
+{
+  "enable_trailing_up": true,
+  "enable_trailing_down": true,
+  "trailing_up_distance": 0.03,
+  "trailing_down_distance": 0.025,
+  "trailing_type": "percentage"
+}
+```
+
+#### Aggressive Setup (For experienced traders)
+```json
+{
+  "enable_trailing_up": true,
+  "enable_trailing_down": true,
+  "trailing_up_distance": 0.015,
+  "trailing_down_distance": 0.01,
+  "trailing_type": "percentage"
+}
+```
+
+#### Absolute Distance Setup
+```json
+{
+  "enable_trailing_up": true,
+  "enable_trailing_down": true,
+  "trailing_up_distance": 2.5,
+  "trailing_down_distance": 1.5,
+  "trailing_type": "absolute"
+}
+```
+
+### Integration with Grid Trading
+
+The trailing stop functionality integrates seamlessly with the grid trading strategy:
+
+1. **Initialization**: Trailing stops are initialized when the base position is established
+2. **Price Monitoring**: The bot monitors price changes every 10 seconds
+3. **Order Management**: Trailing stop orders are placed and updated automatically
+4. **Cycle Management**: Trailing stops are reset when a trading cycle completes
+5. **Conflict Resolution**: Trailing stop orders are handled separately from grid orders
+
+### Monitoring and Logging
+
+The bot provides comprehensive logging for trailing stop activities:
+
+```
+=== Trailing Stop Status ===
+Position: LONG, Entry Price: 100.0000, Current Price: 105.2000
+Highest Price: 108.5000, Lowest Price: 98.2000
+Unrealized P&L: 5.20%
+Trailing Up Level: 106.3300 (Order ID: 12345, Distance: 2.00%)
+Trailing Down Level: 96.5470 (Order ID: 12346, Distance: 1.50%)
+Total Adjustments: 3, Last Update: 14:32:15
+Recent adjustments (last hour): 2
+```
+
+### History Tracking
+
+All trailing stop adjustments are automatically saved to JSON files for analysis:
+- Files are named `trailing_stop_history_YYYY-MM-DD.json`
+- Include complete state and adjustment history
+- Useful for strategy optimization and performance analysis
+
+### Best Practices
+
+1. **Start Conservative**: Begin with wider trailing distances (2-3%)
+2. **Test Thoroughly**: Always test on testnet before live trading
+3. **Monitor Performance**: Review trailing stop history files regularly
+4. **Market Conditions**: Consider disabling in highly volatile markets
+5. **Risk Management**: Trailing stops complement but don't replace proper position sizing
+
+### Limitations
+
+- Trailing stops work best in trending markets
+- May result in premature exits in choppy/sideways markets
+- Requires stable internet connection for real-time monitoring
+- Exchange rate limits may affect order update frequency
 
 ## Architecture
 
@@ -307,6 +491,12 @@ For safe testing, use Binance Testnet:
 - Verify date format (YYYY-MM-DD)
 - Ensure date range is valid
 
+**❌ Trailing stops not working**
+- Ensure `enable_trailing_up` or `enable_trailing_down` is set to `true`
+- Check that trailing distances are reasonable (0.01-0.05 for percentage)
+- Verify stable internet connection for price monitoring
+- Review logs for trailing stop adjustment messages
+
 ### Debug Mode
 
 Enable debug logging for troubleshooting:
@@ -342,9 +532,11 @@ binance-grid-bot-go/
 │   ├── logger/          # Logging utilities
 │   ├── models/          # Data models
 │   └── reporter/        # Performance reporting
-├── config.json          # Configuration file
-├── grid_state.json      # Bot state (auto-generated)
-└── logs/                # Log files
+├── config.json                    # Configuration file
+├── config_with_trailing_stops_example.json  # Example config with trailing stops
+├── grid_state.json                # Bot state (auto-generated)
+├── trailing_stop_history_*.json   # Trailing stop history (auto-generated)
+└── logs/                          # Log files
 ```
 
 ### Contributing
@@ -381,6 +573,8 @@ GOOS=darwin GOARCH=amd64 go build -o grid-bot-macos ./cmd/bot/main.go
 5. **Never commit API keys** to version control
 6. **Keep your API keys secure** and rotate them regularly
 7. **Understand the risks** of automated trading
+8. **Test trailing stops thoroughly** before using in live trading
+9. **Use conservative trailing distances** when starting out
 
 ### Risk Warning
 
