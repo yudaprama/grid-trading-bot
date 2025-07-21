@@ -1,0 +1,16 @@
+# Dependabot configuration file
+# See https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Enable version updates for Go modules
+  - package-ecosystem: "gomod"
+    # Look for `go.mod` files in the `binance-trade-bot-go` directory
+    directory: /
+    # Check for updates daily
+    schedule:
+      interval: "daily"
+    # Add labels to pull requests
+    labels:
+      - "dependencies"
+      - "go"

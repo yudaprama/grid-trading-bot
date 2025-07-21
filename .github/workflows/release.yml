@@ -1,0 +1,85 @@
+# Release Workflow - Build and Release Cross-Platform Binaries
+
+name: Release
+
+# Trigger on release events
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-release:
+    name: Build and Release Cross-Platform Binaries
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        include:
+          # macOS builds
+          - goos: darwin
+            goarch: amd64
+            binary_suffix: ""
+            asset_name: "grid-bot-darwin-amd64"
+          - goos: darwin
+            goarch: arm64
+            binary_suffix: ""
+            asset_name: "grid-bot-darwin-arm64"
+          # Linux builds
+          - goos: linux
+            goarch: amd64
+            binary_suffix: ""
+            asset_name: "grid-bot-linux-amd64"
+          # Windows builds
+          - goos: windows
+            goarch: amd64
+            binary_suffix: ".exe"
+            asset_name: "grid-bot-windows-amd64.exe"
+
+    steps:
+      # Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Set up Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      # Cache Go modules to speed up builds
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # Install dependencies
+      - name: Install dependencies
+        run: go mod download
+
+      # Build the binary for the target platform
+      - name: Build binary for ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build \
+            -a \
+            -installsuffix cgo \
+            -ldflags="-w -s -X main.version=${{ github.ref_name }} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o ${{ matrix.asset_name }} \
+            ./cmd/bot
+
+      # Upload the binary as a release asset
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./${{ matrix.asset_name }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/octet-stream
